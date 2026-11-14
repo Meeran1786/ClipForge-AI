@@ -66,7 +66,15 @@ class AttachFile(BaseModel):
 
 def project_to_dict(p: Project, *, clip_count: int = 0) -> dict[str, Any]:
     is_link = p.source_kind != "local"
+    analysis = dict(p.analysis or {})
+    transcript = dict(analysis.get("transcript") or {})
+    transcript.pop("plan", None)  # internal bookkeeping
     return {
+        "analysis": {
+            "audio": analysis.get("audio"),
+            "video": analysis.get("video"),
+            "transcript": transcript or None,
+        },
         "source_meta": p.source_meta,
         "has_proxy": bool(p.proxy_path),
         "has_audio_file": bool(p.audio_path),

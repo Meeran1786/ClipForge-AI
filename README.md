@@ -5,8 +5,8 @@ best moments, cuts them with context, reframes to 9:16, adds word-synced
 captions and optional licensed music, and writes titles and hashtags. Nothing
 is published without approval.
 
-**Status:** Phases 1 and 2 of 10 are built — the app foundation, dashboard and
-video ingestion. It does not find or cut clips yet. See the [roadmap](docs/ROADMAP.md) for what each
+**Status:** Phases 1 to 3 of 10 are built — the app foundation, dashboard,
+video ingestion and whole-video analysis. It does not pick or cut clips yet. See the [roadmap](docs/ROADMAP.md) for what each
 phase adds and the [architecture](docs/ARCHITECTURE.md) for how it fits
 together.
 
@@ -38,6 +38,13 @@ Options: `--port 9000`, `--no-browser`, `--data-dir <folder>`.
   an explanation.
 - Each project folder gets a `rights.json` with the link, channel, credit,
   rights status and permission evidence.
+- Every prepared video is analysed automatically: a loudness curve, silences,
+  sudden loud moments, scene changes, on-screen motion, and a transcript with
+  word timings. The project page shows them on a clickable timeline beside a
+  searchable transcript. Transcription runs on this computer; the speech model
+  (about 500 MB) downloads on first use. A three-hour stream takes roughly
+  20–40 minutes to transcribe, and an interrupted run continues from the last
+  finished ten-minute chunk.
 - Live, stage-by-stage progress for background jobs, with cancel and retry.
   A job interrupted by closing or killing the app continues from the first
   unfinished stage when the app starts again.

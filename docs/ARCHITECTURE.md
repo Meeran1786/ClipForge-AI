@@ -209,8 +209,20 @@ does not include API access by itself. Two routes exist:
    This is the dependable route for uploading video and getting JSON back. The
    key goes in the local `.env` file, typed in by the owner.
 
-Both sit behind the same interface; Phase 3 starts by testing route 1 with a
-real video file and falls back to route 2 if it cannot see video.
+Both sit behind the same interface. Route 1 was tested on 2026-11-15 and is
+still inconclusive: the tool opened the video file, then the service returned
+"no capacity" on two Gemini tiers. Each attempt carried about 25,000 tokens of
+overhead before any video was looked at. Phase 4 starts by settling this, and
+falls back to route 2 if route 1 cannot see video or stays unreliable.
+
+As built in Phase 3, the whole-video work is local and needs no AI service:
+`analysis/audio_signals.py` (loudness, silences, sudden loud moments, all
+judged relative to the recording's own level), `analysis/video_signals.py`
+(scene changes and motion from four tiny frames a second),
+`analysis/transcript.py` (faster-whisper in ten-minute chunks cut at pauses,
+each chunk saved as it finishes, word timings corrected against the measured
+silences). Results live in `audio_signals.json`, `video_signals.json` and the
+`transcript_segments` table.
 
 The owner's Google password is never needed by the app and must not be stored
 or shared.

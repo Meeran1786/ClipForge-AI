@@ -77,7 +77,56 @@ three-hour 1080p60 Twitch recording is roughly 8–10 GB.
 Gate: ingest one local file and one URL the owner has rights to; verify proxy,
 audio and metadata on disk. Confirm what Kick's API actually exposes.
 
-## Phase 3 — Audio and video analysis
+## Phase 3 — Audio and video analysis — done 2026-11-15
+
+What was built: sound analysis (loudness curve, silences, sudden loud moments),
+picture analysis (scene changes, on-screen motion), a resumable transcript with
+word timings from a local speech model, and a timeline + transcript view on the
+project page. Analysis runs automatically after a video is prepared and can be
+re-run from the project page.
+
+Gate results:
+
+- Ground-truth video (eight spoken sentences at known times, four hard cuts,
+  one loud burst): all nine transcript lines start within 0.28 s of the true
+  time; the four scene changes are exact; exactly one loud moment is flagged,
+  at the burst; the eleven pauses are found.
+- Real speech: Tears of Steel (CC BY 3.0, Blender Foundation, 12 minutes of
+  dialogue under music and effects), compared word by word with the video's
+  own uploaded English captions. All 31 lines that could be matched start
+  within 1 s of their caption (median 0.24 s, worst 0.80 s). The transcript
+  has 306 words against the captions' 331. Download to finished analysis took
+  about three minutes.
+- Dashboard: timeline and transcript render; clicking a line or the timeline
+  seeks the player; transcript search filters.
+- 84 automated tests pass. Tests use a stand-in speech engine, so the real
+  model is exercised only by the gate runs above.
+
+Bugs found by the gate and fixed: steady sound was labelled one long silence;
+ordinary sentences after a pause were flagged as loud moments (ten false ones
+on the test video); a line after a long pause was timed nine seconds early; and
+the speech model's default silence filter discarded speech under music (69% of
+caption words found, now 77% with the default "sensitive" setting, 85% with
+the filter off at about six times the run time).
+
+Not done, and why:
+
+- **The gate asked for a 30–60 minute real video; the longest real one tested
+  was 12 minutes.** Chunked transcription across several chunks is covered
+  only by automated tests with the stand-in engine, not by a real long video.
+- **Gemini access is still unverified.** Through the Antigravity sign-in, the
+  tool opened the test video file, but the service answered "no capacity" on
+  two Gemini tiers before it could say whether it understood the video. Each
+  attempt cost about 25,000 tokens of overhead. Nothing in this phase needs
+  Gemini; Phase 4 does, so this is the first thing to settle there, with an
+  API key as the fallback.
+- Platform captions are not used as a transcript source; the local speech
+  model handles every source the same way.
+- No speaker identification. It needs a model too heavy for this PC.
+
+Measured here: the small speech model runs about 10x faster than real time on
+clean speech, so a three-hour stream should transcribe in roughly 20–40
+minutes. A film with long music-only stretches is slower per minute.
 
 - First task: test Gemini access (API key vs. Gemini CLI) with a real video
   file and settle the default.

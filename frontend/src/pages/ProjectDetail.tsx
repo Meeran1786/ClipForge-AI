@@ -2,6 +2,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { type ReactNode, useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
 import { ApiError, api, type Project } from '../api'
+import { AnalysisWorkspace } from '../components/AnalysisWorkspace'
 import { Thumb } from '../components/ProjectRow'
 import { RightsFields, type RightsValue } from '../components/RightsFields'
 import { ago, CATEGORY_LABEL, duration, fileSize, PROJECT_STATUS, RIGHTS, SOURCE_LABEL } from '../format'
@@ -166,6 +167,14 @@ export default function ProjectDetail() {
     },
   })
 
+  const reanalyse = useMutation({
+    mutationFn: () => api.analyze(id),
+    onSuccess: (updated) => {
+      qc.setQueryData(['project', id], updated)
+      void qc.invalidateQueries({ queryKey: ['jobs', id] })
+    },
+  })
+
   if (!Number.isInteger(id) || (project.isError && project.error instanceof ApiError && project.error.status === 404))
     return (
       <Empty title="Project not found">
@@ -233,21 +242,12 @@ export default function ProjectDetail() {
         </div>
       )}
 
+      {p.has_proxy && <AnalysisWorkspace project={p} busy={jobActive} />}
+
       <div className="grid gap-6 lg:grid-cols-5">
         <div className="space-y-6 lg:col-span-2">
           <Section title="Source video">
-            {p.has_proxy ? (
-              <video
-                key={p.updated_at}
-                className="mb-4 aspect-video w-full rounded-md bg-black"
-                controls
-                preload="metadata"
-                poster={p.has_thumbnail ? `/api/projects/${p.id}/thumbnail` : undefined}
-                src={`/api/projects/${p.id}/proxy`}
-              />
-            ) : (
-              <Thumb project={p} className="mb-4 aspect-video w-full" />
-            )}
+            {!p.has_proxy && <Thumb project={p} className="mb-4 aspect-video w-full" />}
             <dl className="divide-y divide-line">
               {p.source_url && (
                 <Fact label="Link">
@@ -305,7 +305,26 @@ export default function ProjectDetail() {
         </div>
 
         <div className="space-y-6 lg:col-span-3">
-          <Section title="Processing">
+          <Section
+            title="Processing"
+            aside={
+              p.has_proxy &&
+              !jobActive && (
+                <button
+                  className="text-xs text-soft hover:text-ink disabled:opacity-50"
+                  onClick={() => reanalyse.mutate()}
+                  disabled={reanalyse.isPending}
+                >
+                  Run analysis again
+                </button>
+              )
+            }
+          >
+            {reanalyse.isError && (
+              <div className="mb-4">
+                <ErrorNote>{reanalyse.error.message}</ErrorNote>
+              </div>
+            )}
             {jobs.isPending ? (
               <Spinner />
             ) : latestJob ? (
@@ -321,10 +340,10 @@ export default function ProjectDetail() {
 
           {canAttach && <AttachFile project={p} />}
 
-          <Section title="Detected moments" aside={<Badge tone="warn">Not built yet · Phases 3–4</Badge>}>
-            <Empty title="No analysis yet">
-              Transcript, timeline, viral scores and category labels appear here once audio and video analysis
-              (Phase 3) and moment detection (Phase 4) are built.
+          <Section title="Detected moments" aside={<Badge tone="warn">Not built yet · Phase 4</Badge>}>
+            <Empty title="No moments yet">
+              The timeline and transcript above are the raw material. Picking the best moments, with a viral score
+              and category for each, is built in Phase 4.
             </Empty>
           </Section>
         </div>

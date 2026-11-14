@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import shutil
 from pathlib import Path
 
@@ -12,8 +13,8 @@ from sqlalchemy import func, select
 from ..context import AppContext, get_ctx
 from ..ingest import detect_platform
 from ..media import VIDEO_EXTENSIONS
-from ..models import Clip, Job, Project
-from ..pipelines import default_link_title
+from ..models import Clip, Job, Project, TranscriptSegment
+from ..pipelines import default_link_title, reset_analysis
 from ..rights import download_blocker, write_rights_file
 from ..schemas import AttachFile, ProjectCreate, RightsUpdate, project_to_dict
 
@@ -166,6 +167,7 @@ def attach_file(project_id: int, body: AttachFile, ctx: AppContext = Depends(get
             raise HTTPException(404, "Project not found")
         if _busy(s, project_id):
             raise HTTPException(409, "This project is still processing. Cancel its job first.")
+        reset_analysis(s, ctx.settings, project)
         project.source_path = str(path)
         project.media = None
         project.thumbnail = None
@@ -199,6 +201,90 @@ def get_proxy(project_id: int, ctx: AppContext = Depends(get_ctx)) -> FileRespon
     """The 360p preview copy. Supports byte ranges, so the player can seek."""
     path = _project_file(ctx, project_id, "proxy_path")
     return FileResponse(path, media_type="video/mp4", headers={"Cache-Control": "no-cache"})
+
+
+def _shrink(series: list[float], points: int) -> tuple[list[float], int]:
+    """Fewer points for drawing, keeping each stretch's highest value (peaks stay visible)."""
+    if len(series) <= points:
+        return series, 1
+    step = -(-len(series) // points)
+    return [max(series[i:i + step]) for i in range(0, len(series), step)], step
+
+
+@router.get("/{project_id}/signals")
+def get_signals(project_id: int, points: int = 1500, ctx: AppContext = Depends(get_ctx)) -> dict:
+    """Loudness and motion curves, silences, scene changes and loud moments."""
+    with ctx.session() as s:
+        project = s.get(Project, project_id)
+        if project is None:
+            raise HTTPException(404, "Project not found")
+        duration = (project.media or {}).get("duration") or 0
+    folder = ctx.settings.project_dir(project_id)
+    points = max(100, min(points, 6000))
+
+    def load(name: str) -> dict:
+        path = folder / name
+        return json.loads(path.read_text(encoding="utf-8")) if path.is_file() else {}
+
+    audio, video = load("audio_signals.json"), load("video_signals.json")
+    loud, loud_step = _shrink(audio.get("loudness") or [], points)
+    motion, motion_step = _shrink(video.get("motion") or [], points)
+    return {
+        "duration": audio.get("duration") or duration,
+        "has_audio": bool(audio),
+        "has_video": bool(video),
+        "loudness": loud,
+        "loudness_hop": (audio.get("hop") or 0.5) * loud_step,
+        "loudness_stats": audio.get("stats"),
+        "motion": motion,
+        "motion_hop": (video.get("hop") or 0.5) * motion_step,
+        "silences": audio.get("silences") or [],
+        "events": audio.get("events") or [],
+        "cuts": video.get("cuts") or [],
+    }
+
+
+@router.get("/{project_id}/transcript")
+def get_transcript(project_id: int, words: bool = False, ctx: AppContext = Depends(get_ctx)) -> dict:
+    with ctx.session() as s:
+        project = s.get(Project, project_id)
+        if project is None:
+            raise HTTPException(404, "Project not found")
+        state = (project.analysis or {}).get("transcript") or {}
+        rows = s.scalars(
+            select(TranscriptSegment)
+            .where(TranscriptSegment.project_id == project_id)
+            .order_by(TranscriptSegment.start, TranscriptSegment.id)
+        ).all()
+        return {
+            "language": state.get("language"),
+            "model": state.get("model"),
+            "done": bool(state.get("done")),
+            "segments": [
+                {"id": r.id, "start": r.start, "end": r.end, "text": r.text, **({"words": r.words} if words else {})}
+                for r in rows
+            ],
+        }
+
+
+@router.post("/{project_id}/analyze")
+def analyze(project_id: int, ctx: AppContext = Depends(get_ctx)) -> dict:
+    """Run the analysis again from scratch on a video that is already prepared."""
+    with ctx.session() as s:
+        project = s.get(Project, project_id)
+        if project is None:
+            raise HTTPException(404, "Project not found")
+        if _busy(s, project_id):
+            raise HTTPException(409, "This project is still processing. Cancel its job first.")
+        if not project.proxy_path or not Path(project.proxy_path).is_file():
+            raise HTTPException(409, "This video has not been prepared yet, so there is nothing to analyse.")
+        reset_analysis(s, ctx.settings, project)
+        project.status, project.status_detail = "processing", None
+        s.commit()
+        data = project_to_dict(project)
+    ctx.worker.enqueue("analyze", project_id=project_id)
+    ctx.bus.publish({"type": "project", "id": project_id})
+    return data
 
 
 @router.delete("/{project_id}", status_code=204)

@@ -12,12 +12,24 @@
 
 from __future__ import annotations
 
+import json
 import shutil
 import tempfile
 from pathlib import Path
 
+from sqlalchemy import delete
 from sqlalchemy.orm import Session
 
+from .analysis.audio_signals import analyse_audio
+from .analysis.transcript import (
+    make_transcriber,
+    model_is_downloaded,
+    offset_segments,
+    plan_chunks,
+    read_audio,
+    tighten,
+)
+from .analysis.video_signals import analyse_video
 from .ingest import PLATFORM_LABELS, IngestRefused, source_for
 from .jobs.engine import Pipeline, StageContext, StageDef
 from .media import (
@@ -29,7 +41,7 @@ from .media import (
     run,
     tool_version,
 )
-from .models import Job, Project
+from .models import Job, Project, TranscriptSegment
 from .rights import download_blocker, write_rights_file
 
 
@@ -177,6 +189,131 @@ def _audio(ctx: StageContext) -> dict:
     return {"audio": str(dest), "bytes": dest.stat().st_size}
 
 
+# ---- analysis ---------------------------------------------------------------
+
+
+def _clock(seconds: float) -> str:
+    s = int(seconds)
+    return f"{s // 3600}:{s % 3600 // 60:02d}:{s % 60:02d}" if s >= 3600 else f"{s // 60}:{s % 60:02d}"
+
+
+def _note_analysis(ctx: StageContext, key: str, value: dict) -> None:
+    """Merge one stage's summary into Project.analysis."""
+    with ctx.session() as s:
+        project = s.get(Project, ctx.project_id)
+        project.analysis = {**(project.analysis or {}), key: value}
+        s.commit()
+    ctx.publish_project()
+
+
+def _audio_signals(ctx: StageContext) -> dict:
+    with ctx.session() as s:
+        audio = s.get(Project, ctx.project_id).audio_path
+    if not audio or not Path(audio).is_file():
+        ctx.report(1.0, "This video has no sound to analyse")
+        return {"skipped": True}
+    data = analyse_audio(Path(audio), lambda f: ctx.report(f, "Measuring loudness and silences"))
+    out = ctx.settings.project_dir(ctx.project_id) / "audio_signals.json"
+    out.write_text(json.dumps(data), encoding="utf-8")
+    summary = {
+        "events": len(data["events"]),
+        "silences": len(data["silences"]),
+        "silence_seconds": data.get("stats", {}).get("silence_seconds", 0),
+    }
+    _note_analysis(ctx, "audio", summary)
+    ctx.report(1.0, f"{summary['events']} sudden loud moments, {_clock(summary['silence_seconds'])} of silence")
+    return summary
+
+
+def _video_signals(ctx: StageContext) -> dict:
+    with ctx.session() as s:
+        project = s.get(Project, ctx.project_id)
+        proxy, duration = project.proxy_path, (project.media or {}).get("duration")
+    if not proxy or not Path(proxy).is_file():
+        raise MediaError("The preview copy is missing; prepare the video again")
+    data = analyse_video(ctx.settings, Path(proxy), duration, lambda f: ctx.report(f, "Looking for scene changes"))
+    out = ctx.settings.project_dir(ctx.project_id) / "video_signals.json"
+    out.write_text(json.dumps(data), encoding="utf-8")
+    summary = {"cuts": len(data["cuts"])}
+    _note_analysis(ctx, "video", summary)
+    ctx.report(1.0, f"{summary['cuts']} scene changes")
+    return summary
+
+
+def _transcript(ctx: StageContext) -> dict:
+    with ctx.session() as s:
+        project = s.get(Project, ctx.project_id)
+        audio = project.audio_path
+        state = dict((project.analysis or {}).get("transcript") or {})
+    if not audio or not Path(audio).is_file():
+        ctx.report(1.0, "This video has no sound to transcribe")
+        return {"skipped": True}
+
+    signals_file = ctx.settings.project_dir(ctx.project_id) / "audio_signals.json"
+    signals = json.loads(signals_file.read_text(encoding="utf-8")) if signals_file.is_file() else {}
+    silences = signals.get("silences") or []
+    plan = [tuple(c) for c in state.get("plan") or []]
+    if not plan:
+        duration = signals.get("duration") or _media_info(ctx).get("duration") or 0
+        plan = plan_chunks(
+            duration, signals.get("loudness") or [], signals.get("hop") or 0.5,
+            float(ctx.settings.transcript_chunk_seconds),
+        )
+    total = plan[-1][1] if plan else 0.0
+    done = int(state.get("chunks_done", 0))
+    language = state.get("language") or (None if ctx.settings.language == "auto" else ctx.settings.language)
+
+    if done < len(plan):
+        if not model_is_downloaded(ctx.settings):
+            ctx.report(0.0, "Downloading the speech model (first time only, about 500 MB)")
+        else:
+            ctx.report(plan[done][0] / total if total else 0.0, "Loading the speech model")
+        transcriber = make_transcriber(ctx.settings)
+        for i, (a, b) in enumerate(plan):
+            if i < done:
+                continue  # saved before an earlier interruption
+
+            def tick(fraction: float, a: float = a, b: float = b) -> None:
+                at = a + (b - a) * fraction
+                ctx.report(min(0.99, at / total), f"Transcribing: {_clock(at)} of {_clock(total)}")
+
+            tick(0.0)
+            segments, heard = transcriber.transcribe(read_audio(audio, a, b), language, tick)
+            language = language or heard
+            rows = tighten(offset_segments(segments, a, total), silences)
+            with ctx.session() as s:
+                project = s.get(Project, ctx.project_id)
+                s.add_all(
+                    TranscriptSegment(project_id=project.id, chunk=i, start=r["start"], end=r["end"],
+                                      text=r["text"], words=r["words"])
+                    for r in rows
+                )
+                lines = int(state.get("lines", 0)) + len(rows)
+                state = {
+                    "plan": [list(c) for c in plan], "chunks_done": i + 1, "lines": lines,
+                    "language": language, "model": transcriber.name, "done": i + 1 == len(plan),
+                }
+                # the chunk's lines and the "chunk finished" mark are saved together
+                project.analysis = {**(project.analysis or {}), "transcript": state}
+                s.commit()
+            ctx.publish_project()
+
+    if not plan:
+        _note_analysis(ctx, "transcript", {"plan": [], "chunks_done": 0, "lines": 0, "language": language,
+                                           "model": None, "done": True})
+    lines = int(state.get("lines", 0))
+    ctx.report(1.0, f"{lines} spoken lines" + (f", language: {language}" if language else ""))
+    return {"lines": lines, "language": language}
+
+
+def reset_analysis(s: Session, settings, project: Project) -> None:
+    """Forget a previous analysis so it can be run again from scratch."""
+    s.execute(delete(TranscriptSegment).where(TranscriptSegment.project_id == project.id))
+    project.analysis = None
+    for name in ("audio_signals.json", "video_signals.json"):
+        (settings.project_dir(project.id) / name).unlink(missing_ok=True)
+
+
 def _ingest_finished(s: Session, job: Job) -> None:
     project = s.get(Project, job.project_id) if job.project_id else None
     if project is None:
@@ -204,6 +341,12 @@ _PREPARE = [
     StageDef("thumbnail", "Create poster frame", _thumbnail),
     StageDef("proxy", "Make preview copy", _proxy),
     StageDef("audio", "Extract audio", _audio),
+]
+
+_ANALYSE = [
+    StageDef("audio_signals", "Analyse sound", _audio_signals),
+    StageDef("video_signals", "Analyse picture", _video_signals),
+    StageDef("transcript", "Transcribe speech", _transcript),
 ]
 
 
@@ -289,13 +432,15 @@ def _wait_stage(label: str):
 
 PIPELINES: dict[str, Pipeline] = {
     "ingest_local": Pipeline(
-        stages=list(_PREPARE), on_finish=_ingest_finished, on_retry=_ingest_retried
+        stages=[*_PREPARE, *_ANALYSE], on_finish=_ingest_finished, on_retry=_ingest_retried
     ),
+    "analyze": Pipeline(stages=list(_ANALYSE), on_finish=_ingest_finished, on_retry=_ingest_retried),
     "ingest_url": Pipeline(
         stages=[
             StageDef("metadata", "Look up the video", _metadata, max_attempts=3),
             StageDef("download", "Download the video", _download, max_attempts=3),
             *_PREPARE,
+            *_ANALYSE,
         ],
         on_finish=_ingest_finished,
         on_retry=_ingest_retried,

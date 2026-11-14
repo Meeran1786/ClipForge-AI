@@ -24,6 +24,22 @@ class Settings(BaseSettings):
     ffmpeg_dir: Path = REPO_ROOT / "tools" / "ffmpeg"
     frontend_dist: Path = REPO_ROOT / "frontend" / "dist"
 
+    # Speech-to-text. "small" is about 10x faster than real time on this CPU;
+    # "base" is about 25x and a little less accurate with slang and names.
+    whisper_model: str = "small"
+    language: str = "auto"  # or a code such as "en"
+    # How eagerly stretches are treated as speech before transcribing them.
+    # Measured on a film with dialogue under music (share of caption words found):
+    #   "normal"    69%, fastest - misses speech under loud music or effects
+    #   "sensitive" 77%, about 1.5x the time (default)
+    #   "off"       85%, about 6x the time - transcribes everything, music included
+    speech_detection: str = "sensitive"
+    transcript_chunk_seconds: int = 600
+
+    @property
+    def models_dir(self) -> Path:
+        return self.data_dir / "cache" / "models"
+
     @property
     def db_path(self) -> Path:
         return self.data_dir / "clipforge.db"

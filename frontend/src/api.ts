@@ -50,6 +50,45 @@ export interface SourceMeta {
   webpage_url: string | null
 }
 
+export interface AnalysisSummary {
+  audio: { events: number; silences: number; silence_seconds: number } | null
+  video: { cuts: number } | null
+  transcript: {
+    chunks_done: number
+    lines: number
+    language: string | null
+    model: string | null
+    done: boolean
+  } | null
+}
+
+export interface Signals {
+  duration: number
+  has_audio: boolean
+  has_video: boolean
+  loudness: number[]
+  loudness_hop: number
+  motion: number[]
+  motion_hop: number
+  silences: [number, number][]
+  events: { t: number; kind: 'surge' | 'surge_after_silence'; rise_db: number }[]
+  cuts: number[]
+}
+
+export interface TranscriptLine {
+  id: number
+  start: number
+  end: number
+  text: string
+}
+
+export interface Transcript {
+  language: string | null
+  model: string | null
+  done: boolean
+  segments: TranscriptLine[]
+}
+
 export interface RightsRecord {
   rights_status: RightsStatus
   creator?: string
@@ -76,6 +115,7 @@ export interface Project {
   options: ProjectOptions
   media: Media | null
   source_meta: SourceMeta | null
+  analysis: AnalysisSummary
   has_thumbnail: boolean
   has_proxy: boolean
   has_audio_file: boolean
@@ -169,6 +209,9 @@ export const api = {
   updateRights: (id: number, r: RightsRecord) =>
     request<Project>(`/api/projects/${id}/rights`, { method: 'PATCH', body: JSON.stringify(r) }),
   attachFile: (id: number, path: string) => post<Project>(`/api/projects/${id}/attach`, { path }),
+  signals: (id: number) => request<Signals>(`/api/projects/${id}/signals`),
+  transcript: (id: number) => request<Transcript>(`/api/projects/${id}/transcript`),
+  analyze: (id: number) => post<Project>(`/api/projects/${id}/analyze`),
   jobs: (projectId?: number) =>
     request<Job[]>(projectId === undefined ? '/api/jobs' : `/api/jobs?project_id=${projectId}`),
   selfTest: (stageSeconds: number) => post<Job>('/api/jobs/selftest', { stage_seconds: stageSeconds }),

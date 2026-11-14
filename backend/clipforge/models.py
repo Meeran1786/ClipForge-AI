@@ -45,6 +45,8 @@ class Project(Base):
     # 360p copy for analysis and preview, and 16 kHz mono audio for speech work
     proxy_path: Mapped[str | None] = mapped_column(Text, default=None)
     audio_path: Mapped[str | None] = mapped_column(Text, default=None)
+    # analysis bookkeeping: transcript chunk plan and progress, language, model
+    analysis: Mapped[dict[str, Any] | None] = mapped_column(JSON, default=None)
 
     # created | processing | ready | needs_rights | failed
     status: Mapped[str] = mapped_column(String(30), default="created")
@@ -57,6 +59,9 @@ class Project(Base):
         back_populates="project", cascade="all, delete-orphan"
     )
     clips: Mapped[list[Clip]] = relationship(
+        back_populates="project", cascade="all, delete-orphan"
+    )
+    transcript: Mapped[list[TranscriptSegment]] = relationship(
         back_populates="project", cascade="all, delete-orphan"
     )
 
@@ -122,6 +127,25 @@ class Clip(Base):
     created_at: Mapped[datetime] = mapped_column(default=utcnow)
 
     project: Mapped[Project] = relationship(back_populates="clips")
+
+
+class TranscriptSegment(Base):
+    """One spoken line, timed on the whole video's clock."""
+
+    __tablename__ = "transcript_segments"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    project_id: Mapped[int] = mapped_column(
+        ForeignKey("projects.id", ondelete="CASCADE"), index=True
+    )
+    chunk: Mapped[int] = mapped_column(Integer)
+    start: Mapped[float] = mapped_column(Float, index=True)
+    end: Mapped[float] = mapped_column(Float)
+    text: Mapped[str] = mapped_column(Text)
+    # [{"s": start, "e": end, "w": word, "p": confidence}]
+    words: Mapped[list[dict[str, Any]]] = mapped_column(JSON, default=list)
+
+    project: Mapped[Project] = relationship(back_populates="transcript")
 
 
 class Setting(Base):

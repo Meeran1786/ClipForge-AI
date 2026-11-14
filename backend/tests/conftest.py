@@ -13,7 +13,8 @@ from pathlib import Path
 
 import pytest
 
-from clipforge import ingest
+from clipforge import ingest, pipelines
+from clipforge.analysis.transcript import Segment, Word
 from clipforge.api import system as system_api
 from clipforge.ingest import IngestError, IngestRefused, IngestSource, SourceMeta
 from clipforge.ingest.ytdlp_source import YtDlpSource
@@ -85,6 +86,35 @@ def fake_sources(monkeypatch) -> dict[str, FakeSource]:
 
     monkeypatch.setattr(YtDlpSource, "_extract", _no_network)
     return {f.kind: f for f in fakes}
+
+
+class FakeTranscriber:
+    """Stands in for Whisper: one line per chunk, saying how long the chunk was."""
+
+    name = "fake-stt"
+
+    def __init__(self) -> None:
+        self.calls: list[float] = []
+        self.fail_on_call: int | None = None
+
+    def transcribe(self, audio, language, on_progress=None):
+        seconds = len(audio) / 16000
+        self.calls.append(round(seconds, 2))
+        if self.fail_on_call is not None and len(self.calls) == self.fail_on_call:
+            raise RuntimeError("speech engine crashed")
+        if on_progress:
+            on_progress(0.5)
+        words = [Word(0.2, 0.5, "hello"), Word(0.6, 0.9, "chat")]
+        return [Segment(0.2, 0.9, f"hello chat ({seconds:.1f}s chunk)", words)], language or "en"
+
+
+@pytest.fixture(autouse=True)
+def fake_stt(monkeypatch) -> FakeTranscriber:
+    """No test loads or downloads the real speech model."""
+    fake = FakeTranscriber()
+    monkeypatch.setattr(pipelines, "make_transcriber", lambda _settings: fake)
+    monkeypatch.setattr(pipelines, "model_is_downloaded", lambda _settings: True)
+    return fake
 
 
 @pytest.fixture

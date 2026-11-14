@@ -184,8 +184,9 @@ const JOB_LABEL: Record<Job['status'], string> = {
   cancelled: 'Cancelled',
 }
 const JOB_KIND: Record<string, string> = {
-  ingest_local: 'Preparing video',
-  ingest_url: 'Downloading and preparing video',
+  ingest_local: 'Preparing and analysing video',
+  ingest_url: 'Downloading, preparing and analysing video',
+  analyze: 'Analysing video',
   selftest: 'Pipeline self-test',
 }
 
