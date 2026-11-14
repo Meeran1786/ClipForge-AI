@@ -1,0 +1,28 @@
+# ClipForge AI backend dependencies.
+# Exact installed versions are recorded in requirements.lock.txt.
+
+# web app
+fastapi
+uvicorn[standard]
+python-multipart
+sqlalchemy>=2
+pydantic-settings
+httpx
+
+# ingestion
+yt-dlp
+
+# analysis
+numpy
+librosa
+opencv-python-headless
+scenedetect
+
+# captions (word-level timestamps, CPU)
+faster-whisper
+
+# AI provider
+google-genai
+
+# tests
+pytest

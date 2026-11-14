@@ -1,0 +1,35 @@
+# secrets
+.env
+.env.*
+!.env.example
+
+# runtime data and downloaded tools
+data/
+tools/
+
+# machine-specific tool config
+.claude/
+
+# python
+.venv/
+*.egg-info/
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# node
+node_modules/
+frontend/dist/
+
+# media
+*.mp4
+*.mov
+*.mkv
+*.wav
+*.mp3
+
+# os / editor
+Thumbs.db
+.DS_Store
+.vscode/
+.idea/

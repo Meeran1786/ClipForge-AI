@@ -1,0 +1,83 @@
+@import 'tailwindcss';
+
+@theme {
+  --color-bg: #0e1014;
+  --color-panel: #151820;
+  --color-raised: #1c202a;
+  --color-line: #272c38;
+  --color-ink: #e9eaee;
+  --color-soft: #a4a9b6;
+  --color-faint: #6c7282;
+  --color-accent: #f5c518;
+  --color-accent-ink: #171409;
+  --color-good: #4ade80;
+  --color-bad: #f87171;
+  --color-info: #60a5fa;
+  --font-sans: 'Segoe UI Variable Text', 'Segoe UI', system-ui, -apple-system, sans-serif;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  background: var(--color-bg);
+  color: var(--color-ink);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+}
+
+*:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 2px;
+}
+
+@layer components {
+  .card {
+    @apply rounded-xl border border-line bg-panel;
+  }
+  .btn {
+    @apply inline-flex h-9 cursor-pointer items-center justify-center gap-2 rounded-lg border border-line bg-raised px-3.5 text-sm font-medium text-ink transition-colors hover:border-faint disabled:cursor-not-allowed disabled:opacity-50;
+  }
+  .btn-primary {
+    @apply border-accent bg-accent text-accent-ink hover:border-accent hover:brightness-110;
+  }
+  .btn-danger {
+    @apply text-bad hover:border-bad;
+  }
+  .input {
+    @apply h-10 w-full rounded-lg border border-line bg-bg px-3 text-sm text-ink placeholder:text-faint focus:border-accent focus:outline-none;
+  }
+  .label {
+    @apply mb-1.5 block text-sm font-medium text-ink;
+  }
+  .hint {
+    @apply mt-1.5 text-xs leading-relaxed text-faint;
+  }
+}
+
+@keyframes stripe {
+  to {
+    background-position: 24px 0;
+  }
+}
+.bar-active {
+  background-image: linear-gradient(
+    45deg,
+    rgb(0 0 0 / 0.14) 25%,
+    transparent 25%,
+    transparent 50%,
+    rgb(0 0 0 / 0.14) 50%,
+    rgb(0 0 0 / 0.14) 75%,
+    transparent 75%
+  );
+  background-size: 24px 24px;
+  animation: stripe 0.9s linear infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+  .bar-active {
+    animation: none;
+  }
+}
