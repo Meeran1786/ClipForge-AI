@@ -221,9 +221,51 @@ checks land in Phase 6, part labels and consistent layout in Phase 8, the
 validation report and per-part titles in Phase 9. Dependencies: Phase 3 word
 timings, silences and scene changes; Phase 4 moments.
 
-## Phase 5 — Clip extraction
+## Phase 5 — Clip extraction — built 2026-11-15
 
 Includes the Smart Duration engine described above.
+
+What was built: `duration.py`, a Smart Duration engine with no AI call
+(sentence detection from word timings and pauses; ending and start quality;
+Strict / Smart / Flexible; dead-air removal; context-aware part splitting; a
+validation report per clip); a cutting stage that renders a plain preview per
+clip; clip review (approve, reject, approve anyway); the Smart Duration panel
+on New Project, project Clip settings and Settings; a clips list on the
+project page. Changing duration settings re-cuts without asking the AI.
+
+Results:
+
+- The ten scenarios in [TASKS.md](TASKS.md) are automated tests, plus a
+  randomised test that no valid clip ever cuts a word. 218 tests pass.
+- Live run on a spoken test video (real speech model, real AI pick): re-cut
+  under 30 combinations of target, mode and splitting; 87 clips checked
+  against 390 real word timings by an independent script. 74 cut cleanly, 13
+  refused with a stated reason, no problems: no cut inside a word, every valid
+  clip on sentence boundaries, parts contiguous, no repeated stretch.
+- Dashboard panel, clips list, previews and approve/undo checked in the
+  browser.
+
+Faults found by the tests and the live run, all fixed: a clip that stopped
+before the payoff counted as valid; a clip that dropped most of the moment
+counted as valid; neighbouring parts overlapped by 0.16 s; Strict padded a
+clip with an unrelated line from after a pause; a missing full stop before a
+long silence glued two beats into one sentence (clip started 17 s early); a
+part opened on a two-word afterthought; wrong wording on parts.
+
+Not done:
+
+- Tested on one synthetic spoken video only. No real stream footage, and the
+  Phase 4 gate (owner rating picks on three own videos) is still open.
+- Part labels, per-part titles and hashtags, caption sync checks and the Clip
+  Editor panel belong to Phases 6, 8 and 9 and are not built.
+- "Several speakers at once" is judged from overlapping word timings only;
+  there is no speaker identification.
+- No manual adjustment of a clip's start or end yet (approve or reject only).
+- In Smart mode a part can exceed the tolerance when the moment needs more
+  parts than the maximum allows; the clip says so in its reasons.
+
+[TASKS.md](TASKS.md) has the item-by-item state of the Smart Duration
+request.
 
 - Boundary refinement to sentence and silence boundaries, 15–90 s limits.
 - Silence trimming, de-duplication.

@@ -10,6 +10,10 @@ export default function ClipEditor() {
           speed), the four layouts for gaming footage, crop controls, music choice and volume.
         </p>
         <p>It needs captions (Phase 6), music (Phase 7) and rendering (Phase 8) to exist first.</p>
+        <p>
+          Clip length and part splitting are already working: set them under “Clip settings” on a project’s page,
+          and review each cut in its “Clips” list.
+        </p>
       </NotBuilt>
     </>
   )

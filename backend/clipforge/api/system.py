@@ -60,7 +60,12 @@ def system_info(ctx: AppContext = Depends(get_ctx)) -> dict:
 def stats(ctx: AppContext = Depends(get_ctx)) -> dict:
     with ctx.session() as s:
         by_status = dict(s.execute(select(Project.status, func.count(Project.id)).group_by(Project.status)).all())
-        clips = dict(s.execute(select(Clip.status, func.count(Clip.id)).group_by(Clip.status)).all())
+        # only clips that passed their checks count as "generated"
+        clips = dict(
+            s.execute(
+                select(Clip.status, func.count(Clip.id)).where(Clip.valid.is_(True)).group_by(Clip.status)
+            ).all()
+        )
         jobs = dict(s.execute(select(Job.status, func.count(Job.id)).group_by(Job.status)).all())
         active = s.scalars(
             select(Job).where(Job.status.in_(("queued", "running"))).order_by(Job.created_at, Job.id)

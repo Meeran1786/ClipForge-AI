@@ -225,6 +225,20 @@ written to the same interface but untested. Because video cannot be sent, the
 "multimodal check" in section 3 is done on a sheet of six frames per moment
 instead of the proxy clip.
 
+As built in Phase 5, `duration.py` is the Smart Duration engine. It is pure
+logic with no AI call and no video work: from a moment's picked span
+(`core_start`, `core_end`, `peak`) and the word timings, silences, scene
+changes and loud moments, it returns one clip, several connected parts, or a
+refusal with a reason. Words are grouped into sentences by punctuation and by
+pauses (two seconds of silence after a word with no comma counts as a full
+stop, because speech-to-text sometimes omits it). Every start and end
+candidate is scored; a clip is valid only if it ends on a finished sentence,
+at or after the moment's payoff, with nobody talking over it, and keeps at
+least half of the moment. Parts are found by dynamic programming over
+sentence boundaries. The `clips` stage runs the engine for each selected
+moment and renders a preview from the 360p copy with `render_ranges`; the
+`cut` pipeline re-runs just that stage when duration settings change.
+
 As built in Phase 4, `moments.py` holds the detector: the task text sent to
 the model, validation of its answer (line numbers outside the transcript are
 dropped, never guessed), the rough length fit, duplicate removal, and the

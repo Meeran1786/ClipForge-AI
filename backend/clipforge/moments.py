@@ -27,7 +27,7 @@ from typing import Any, Callable
 from .ai import AIError, Reasoner
 from .config import Settings
 from .media import MediaError
-from .schemas import CATEGORIES
+from .schemas import CATEGORIES, ProjectOptions
 
 log = logging.getLogger("clipforge.moments")
 
@@ -79,6 +79,9 @@ class Candidate:
     score: int = 0
     selected: bool = False
     rank: int = 0
+    # the span as picked, before the rough length fit: what Smart Duration cuts from
+    core_start: float | None = None
+    core_end: float | None = None
     extra: dict[str, Any] = field(default_factory=dict)
 
     @property
@@ -281,8 +284,21 @@ def parse_text_moments(
             subscores=clean_subscores(item.get("scores")),
             reason=str(item.get("reason") or "").strip()[:600],
             excerpt=_excerpt(inside),
+            core_start=round(first.start, 2), core_end=round(last.end, 2),
         ))
     return found
+
+
+def length_bounds(options: dict[str, Any]) -> tuple[float, float]:
+    """The shortest and longest moment to ask the AI for, from the project's Smart Duration settings."""
+    if "target_duration" not in options and "min_duration" in options:
+        # a project saved before Smart Duration existed
+        return float(options.get("min_duration", 20)), float(options.get("max_duration", 60))
+    st = ProjectOptions(**options).duration_settings()
+    # with part splitting on, a moment may run as long as all its parts together
+    longest = st.high * (st.max_parts if st.split else 1)
+    # whole seconds, rounded down: the longest is a limit, so never round it up
+    return float(max(8, int(0.5 * st.target))), float(int(longest + 1e-6))
 
 
 # ---- step 2: loud moments the transcript pass missed ---------------------------
@@ -306,6 +322,7 @@ def signal_candidates(
             subscores={k: 0 for k in SUBSCORES},
             reason=f"The sound suddenly rose by {event.get('rise_db', 0):.0f} dB here.",
             excerpt=_excerpt(inside), source="signals",
+            core_start=round(start, 2), core_end=round(end, 2),
         ))
         if len(out) >= limit:
             break
@@ -461,7 +478,7 @@ def detect_moments(
 ) -> tuple[list[Candidate], dict[str, Any]]:
     """`report(progress, message)` updates the progress bar; `check()` raises if the job was cancelled."""
     categories = [c for c in CATEGORIES if c in (options.get("categories") or CATEGORIES)]
-    min_len, max_len = float(options.get("min_duration", 20)), float(options.get("max_duration", 60))
+    min_len, max_len = length_bounds(options)
     max_clips = int(options.get("max_clips", 8))
     notes: dict[str, Any] = {"text_calls": 0, "visual_calls": 0, "visual_failed": 0, "provider": reasoner.name}
 

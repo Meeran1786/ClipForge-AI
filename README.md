@@ -5,11 +5,12 @@ best moments, cuts them with context, reframes to 9:16, adds word-synced
 captions and optional licensed music, and writes titles and hashtags. Nothing
 is published without approval.
 
-**Status:** Phases 1 to 4 of 10 are built — the app foundation, dashboard,
-video ingestion, whole-video analysis and AI moment picking. It finds and
-scores the moments worth clipping, but does not cut, caption or render clips
-yet. Moment quality has been checked on two test videos only; it has not yet
-been judged on real stream footage. See the [roadmap](docs/ROADMAP.md) for what each
+**Status:** Phases 1 to 5 of 10 are built — the app foundation, dashboard,
+video ingestion, whole-video analysis, AI moment picking and clip cutting with
+Smart Duration. It finds the moments worth clipping and cuts each one on whole
+sentences, with a plain preview to review. It does not yet add captions,
+reframe to vertical, add music or render finished Shorts. Everything so far
+has been checked on test videos only, not on real stream footage. See the [roadmap](docs/ROADMAP.md) for what each
 phase adds and the [architecture](docs/ARCHITECTURE.md) for how it fits
 together.
 
@@ -57,6 +58,17 @@ Options: `--port 9000`, `--no-browser`, `--data-dir <folder>`.
 - Picking needs an AI provider: the Antigravity command-line tool, signed in,
   or a Gemini API key in `.env`. Without one the video, timeline and
   transcript are still produced and the project says why moments are missing.
+- Each selected moment is cut into a clip by the Smart Duration engine. You
+  choose a target length (15, 20, 30, 35, 45, 60, 90 seconds or your own) and
+  a mode: Strict (never longer), Smart (a little over or under so a sentence
+  can finish) or Flexible (as long as the moment needs). A clip always starts
+  at the beginning of a sentence and ends after a finished one; if nothing
+  complete fits, it says so instead of cutting a sentence. Long moments can
+  be split into connected Part 1 / Part 2 clips at finished sentences.
+- Every clip has a plain preview, its target against actual length with the
+  reason for any difference, a list of checks it passed, and Approve / Reject.
+  Changing the duration settings cuts the clips again at once, with no AI
+  call.
 - Live, stage-by-stage progress for background jobs, with cancel and retry.
   A job interrupted by closing or killing the app continues from the first
   unfinished stage when the app starts again.

@@ -3,7 +3,7 @@ import { type ReactNode, useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
 import { ApiError, api, type Project, type ProjectOptions } from '../api'
 import { AnalysisWorkspace } from '../components/AnalysisWorkspace'
-import { OptionsForm, optionsError } from '../components/OptionsForm'
+import { describeDuration, MODE_INFO, OptionsForm, optionsError } from '../components/OptionsForm'
 import { Thumb } from '../components/ProjectRow'
 import { RightsFields, type RightsValue } from '../components/RightsFields'
 import { ago, CATEGORY_LABEL, duration, fileSize, PROJECT_STATUS, RIGHTS, SOURCE_LABEL } from '../format'
@@ -129,8 +129,9 @@ function ClipSettings({ project }: { project: Project }) {
         <>
           <OptionsForm value={draft} categories={system.data.categories} onChange={setDraft} />
           <p className="hint">
-            Saving re-ranks the moments already picked. It does not ask the AI again; use “Pick moments again”
-            for that.
+            Saving re-ranks the moments already picked and cuts the clips again. It does not ask the AI again; use
+            “Pick moments again” for that. If you turn part splitting on, pick moments again so the AI looks for
+            longer ones.
           </p>
           {save.isError && (
             <div className="mt-3">
@@ -157,8 +158,12 @@ function ClipSettings({ project }: { project: Project }) {
           <Fact label="Maximum clips">{o.max_clips}</Fact>
           <Fact label="Minimum score">{o.min_score}</Fact>
           <Fact label="Clip length">
-            {o.min_duration}–{o.max_duration} sec
+            {describeDuration(o)} · {MODE_INFO[o.duration_mode].label}
           </Fact>
+          <Fact label="Long moments">
+            {o.split_parts ? `Split into up to ${o.max_parts} parts` : 'Not split into parts'}
+          </Fact>
+          <Fact label="Dead air">{o.trim_silence ? 'Removed' : 'Kept'}</Fact>
         </dl>
       )}
     </Section>
@@ -404,10 +409,10 @@ export default function ProjectDetail() {
 
           {canAttach && <AttachFile project={p} />}
 
-          <Section title="Clips" aside={<Badge tone="warn">Not built yet · Phase 5</Badge>}>
-            <Empty title="No clips yet">
-              The picked moments above are rough ranges. Cutting them cleanly at sentence and pause boundaries,
-              with the Smart Duration options, is built in Phase 5.
+          <Section title="Finished Shorts" aside={<Badge tone="warn">Not built yet · Phases 6–9</Badge>}>
+            <Empty title="No finished Shorts yet">
+              The clips above are plain previews of where each cut falls. Captions, vertical framing, music and the
+              final render are built in Phases 6 to 9.
             </Empty>
           </Section>
         </div>

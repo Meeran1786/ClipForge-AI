@@ -1,12 +1,57 @@
-import type { ProjectOptions } from '../api'
+import type { ContextLevel, DurationMode, ProjectOptions } from '../api'
 import { CATEGORY_LABEL } from '../format'
+
+export const DURATION_PRESETS = [15, 20, 30, 35, 45, 60, 90]
+const MIN_TARGET = 10
+const MAX_TARGET = 180
+const FLEX_FACTOR = 1.6
+
+export const MODE_INFO: Record<DurationMode, { label: string; help: string }> = {
+  strict: {
+    label: 'Strict',
+    help: 'Never longer than the target. Setup may be trimmed to fit; if nothing complete fits, no clip is made.',
+  },
+  smart: {
+    label: 'Smart',
+    help: 'The target is an aim. The clip may run a little over or under so the last sentence can finish.',
+  },
+  flexible: {
+    label: 'Flexible',
+    help: 'The target is a preference. The clip runs as long as the whole moment needs, and says why.',
+  },
+}
+
+const CONTEXT_INFO: Record<ContextLevel, string> = {
+  tight: 'Tight: start at the moment itself',
+  balanced: 'Balanced: allow one line of lead-in',
+  full: 'Full: allow up to three lines of lead-in',
+}
+
+/** The range a single clip may land in, for the chosen mode. */
+export function durationRange(o: ProjectOptions): { low: number; high: number } {
+  const t = o.target_duration
+  if (o.duration_mode === 'strict') return { low: 0, high: t }
+  if (o.duration_mode === 'smart')
+    return { low: t * (1 - o.tolerance_pct / 100), high: t * (1 + o.tolerance_pct / 100) }
+  return { low: 0, high: t * FLEX_FACTOR }
+}
+
+export function describeDuration(o: ProjectOptions): string {
+  const { low, high } = durationRange(o)
+  const t = o.target_duration
+  if (o.duration_mode === 'strict') return `${t} s or less`
+  if (o.duration_mode === 'smart') return `about ${t} s (${Math.round(low)}–${Math.round(high)} s)`
+  return `about ${t} s, up to ${Math.round(high)} s if the moment needs it`
+}
 
 export function optionsError(o: ProjectOptions): string | null {
   if (o.categories.length === 0) return 'Pick at least one category.'
   if (!(o.max_clips >= 1 && o.max_clips <= 50)) return 'Maximum clips must be between 1 and 50.'
-  if (!(o.min_duration >= 15 && o.min_duration <= 90) || !(o.max_duration >= 15 && o.max_duration <= 90))
-    return 'Clip length must be between 15 and 90 seconds.'
-  if (o.min_duration > o.max_duration) return 'Shortest clip length cannot be longer than the longest.'
+  if (!(o.target_duration >= MIN_TARGET && o.target_duration <= MAX_TARGET))
+    return `Target length must be between ${MIN_TARGET} and ${MAX_TARGET} seconds.`
+  if (!Number.isInteger(o.target_duration)) return 'Target length must be a whole number of seconds.'
+  if (!(o.tolerance_pct >= 0 && o.tolerance_pct <= 30)) return 'Tolerance must be between 0 and 30 percent.'
+  if (!(o.max_parts >= 2 && o.max_parts <= 5)) return 'Maximum parts must be between 2 and 5.'
   return null
 }
 
@@ -49,6 +94,166 @@ function NumberField({
         )}
       </div>
     </div>
+  )
+}
+
+function SmartDuration({
+  value,
+  set,
+}: {
+  value: ProjectOptions
+  set: <K extends keyof ProjectOptions>(key: K, v: ProjectOptions[K]) => void
+}) {
+  const custom = !DURATION_PRESETS.includes(value.target_duration)
+  const range = durationRange(value)
+  const partsUpTo = Math.round(range.high * value.max_parts)
+
+  return (
+    <fieldset className="rounded-lg border border-line p-4">
+      <legend className="px-1.5 text-sm font-medium">Smart Duration</legend>
+
+      <div className="mb-1.5 text-sm text-soft">Target length</div>
+      <div className="flex flex-wrap items-center gap-2">
+        {DURATION_PRESETS.map((seconds) => {
+          const on = value.target_duration === seconds
+          return (
+            <button
+              key={seconds}
+              type="button"
+              aria-pressed={on}
+              onClick={() => set('target_duration', seconds)}
+              className={`cursor-pointer rounded-lg border px-3 py-1.5 text-sm tabular-nums transition-colors ${
+                on ? 'border-accent bg-accent/15 text-accent' : 'border-line bg-raised text-soft hover:text-ink'
+              }`}
+            >
+              {seconds === 60 ? '60 s (1 min)' : `${seconds} s`}
+            </button>
+          )
+        })}
+        <div className="flex items-center gap-2">
+          <label htmlFor="custom-target" className="text-sm text-soft">
+            Custom
+          </label>
+          <input
+            id="custom-target"
+            type="number"
+            min={MIN_TARGET}
+            max={MAX_TARGET}
+            className={`input h-9 w-20 tabular-nums ${custom ? 'border-accent' : ''}`}
+            value={Number.isNaN(value.target_duration) ? '' : value.target_duration}
+            onChange={(e) => set('target_duration', e.target.valueAsNumber)}
+          />
+          <span className="text-sm text-soft">s</span>
+        </div>
+      </div>
+
+      <div className="mt-5 grid gap-2 sm:grid-cols-3" role="radiogroup" aria-label="Duration mode">
+        {(Object.keys(MODE_INFO) as DurationMode[]).map((mode) => (
+          <button
+            key={mode}
+            type="button"
+            role="radio"
+            aria-checked={value.duration_mode === mode}
+            onClick={() => set('duration_mode', mode)}
+            className={`cursor-pointer rounded-lg border px-3 py-2.5 text-left transition-colors ${
+              value.duration_mode === mode ? 'border-accent bg-accent/10' : 'border-line bg-bg hover:border-faint'
+            }`}
+          >
+            <div className="text-sm font-medium">
+              {MODE_INFO[mode].label}
+              {mode === 'smart' && <span className="ml-1.5 text-xs font-normal text-faint">recommended</span>}
+            </div>
+            <div className="mt-0.5 text-xs leading-relaxed text-soft">{MODE_INFO[mode].help}</div>
+          </button>
+        ))}
+      </div>
+
+      <div className="mt-5 grid gap-5 sm:grid-cols-2">
+        {value.duration_mode === 'smart' && (
+          <NumberField
+            id="tolerance"
+            label="Tolerance"
+            suffix="%"
+            min={0}
+            max={30}
+            value={value.tolerance_pct}
+            onChange={(n) => set('tolerance_pct', n)}
+          />
+        )}
+        <div>
+          <label className="label" htmlFor="context">
+            Context before the moment
+          </label>
+          <select
+            id="context"
+            className="input"
+            value={value.context}
+            onChange={(e) => set('context', e.target.value as ContextLevel)}
+          >
+            {(Object.keys(CONTEXT_INFO) as ContextLevel[]).map((level) => (
+              <option key={level} value={level}>
+                {CONTEXT_INFO[level]}
+              </option>
+            ))}
+          </select>
+        </div>
+      </div>
+
+      <div className="mt-5 space-y-3">
+        <label className="flex cursor-pointer items-start gap-2.5 text-sm">
+          <input
+            type="checkbox"
+            className="mt-0.5 accent-accent"
+            checked={value.split_parts}
+            onChange={(e) => set('split_parts', e.target.checked)}
+          />
+          <span>
+            Split long moments into Part 1, Part 2…
+            <span className="block text-xs text-soft">
+              A moment too long for one clip is told in connected parts, split only where a sentence has finished.
+            </span>
+          </span>
+        </label>
+        {value.split_parts && (
+          <div className="ml-6 w-40">
+            <NumberField
+              id="max-parts"
+              label="Maximum parts"
+              min={2}
+              max={5}
+              value={value.max_parts}
+              onChange={(n) => set('max_parts', n)}
+            />
+          </div>
+        )}
+        <label className="flex cursor-pointer items-start gap-2.5 text-sm">
+          <input
+            type="checkbox"
+            className="mt-0.5 accent-accent"
+            checked={value.trim_silence}
+            onChange={(e) => set('trim_silence', e.target.checked)}
+          />
+          <span>
+            Remove dead air
+            <span className="block text-xs text-soft">
+              Silences longer than two seconds inside a clip are shortened. Speech is never touched.
+            </span>
+          </span>
+        </label>
+      </div>
+
+      <p className="mt-4 rounded-md bg-bg px-3 py-2 text-xs leading-relaxed text-soft">
+        Each clip will be <span className="text-ink">{describeDuration(value)}</span>
+        {value.split_parts && (
+          <>
+            ; moments up to about <span className="text-ink">{partsUpTo} s</span> are split into at most{' '}
+            {value.max_parts} parts
+          </>
+        )}
+        . A clip always starts at the beginning of a sentence and ends after a finished one. The target guides the
+        cut; it never forces one.
+      </p>
+    </fieldset>
   )
 }
 
@@ -104,10 +309,10 @@ export function OptionsForm({
         </div>
       </fieldset>
 
+      <SmartDuration value={value} set={set} />
+
       <div className="grid gap-5 sm:grid-cols-3">
         <NumberField id="max-clips" label="Maximum clips" min={1} max={50} value={value.max_clips} onChange={(n) => set('max_clips', n)} />
-        <NumberField id="min-dur" label="Shortest clip" suffix="sec" min={15} max={90} value={value.min_duration} onChange={(n) => set('min_duration', n)} />
-        <NumberField id="max-dur" label="Longest clip" suffix="sec" min={15} max={90} value={value.max_duration} onChange={(n) => set('max_duration', n)} />
       </div>
 
       <div>

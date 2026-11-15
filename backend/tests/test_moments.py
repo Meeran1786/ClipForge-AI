@@ -384,8 +384,9 @@ def test_without_an_ai_provider_the_video_is_still_ready(client, sample_video, m
     project = client.post("/api/projects", json={"source": "local", "path": str(sample_video)}).json()
     job = wait_job_done(client, project["id"])
     assert job["status"] == "failed"
-    stage = job["stages"][-1]
-    assert stage["name"] == "moments" and stage["status"] == "failed" and stage["attempts"] == 1
+    stage = next(s for s in job["stages"] if s["name"] == "moments")
+    assert stage["status"] == "failed" and stage["attempts"] == 1
+    assert job["stages"][-1]["name"] == "clips" and job["stages"][-1]["status"] == "pending"
 
     after = client.get(f"/api/projects/{project['id']}").json()
     assert after["status"] == "ready", "the video, timeline and transcript are usable"
@@ -416,7 +417,8 @@ def test_an_ai_hiccup_is_retried_once(client, sample_video, fake_ai):
     project = client.post("/api/projects", json={"source": "local", "path": str(sample_video)}).json()
     ready = wait_status(client, project["id"], "ready")
     assert ready["analysis"]["moments"]["found"] == 1
-    assert client.get(f"/api/jobs?project_id={project['id']}").json()[0]["stages"][-1]["attempts"] == 2
+    stages = client.get(f"/api/jobs?project_id={project['id']}").json()[0]["stages"]
+    assert next(s for s in stages if s["name"] == "moments")["attempts"] == 2
 
 
 # ---- the AI plumbing -------------------------------------------------------------

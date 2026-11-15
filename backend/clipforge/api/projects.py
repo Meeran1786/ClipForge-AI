@@ -16,7 +16,7 @@ from ..media import VIDEO_EXTENSIONS
 from ..models import Clip, Job, Moment, Project, TranscriptSegment
 from ..pipelines import default_link_title, reselect, reset_analysis
 from ..rights import download_blocker, write_rights_file
-from ..schemas import AttachFile, ProjectCreate, ProjectOptions, RightsUpdate, project_to_dict
+from ..schemas import AttachFile, ClipReview, ProjectCreate, ProjectOptions, RightsUpdate, project_to_dict
 
 router = APIRouter(prefix="/api/projects", tags=["projects"])
 
@@ -26,7 +26,7 @@ def _clip_counts(s, project_ids: list[int]) -> dict[int, int]:
         return {}
     rows = s.execute(
         select(Clip.project_id, func.count(Clip.id))
-        .where(Clip.project_id.in_(project_ids))
+        .where(Clip.project_id.in_(project_ids), Clip.valid.is_(True))
         .group_by(Clip.project_id)
     ).all()
     return {pid: n for pid, n in rows}
@@ -338,15 +338,105 @@ def detect(project_id: int, ctx: AppContext = Depends(get_ctx)) -> dict:
 
 @router.patch("/{project_id}/options")
 def update_options(project_id: int, body: ProjectOptions, ctx: AppContext = Depends(get_ctx)) -> dict:
-    """Change what the project asks for. Existing moments are re-ranked at once, without the AI."""
+    """Change what the project asks for.
+
+    Existing moments are re-ranked at once and the clips are cut again with the
+    new duration settings. Neither step asks the AI again.
+    """
+    recut = False
     with ctx.session() as s:
         project = s.get(Project, project_id)
         if project is None:
             raise HTTPException(404, "Project not found")
         project.options = body.model_dump()
         reselect(s, project)
+        has_moments = bool(s.scalar(select(func.count(Moment.id)).where(Moment.project_id == project_id)))
+        if has_moments and not _busy(s, project_id):
+            project.status, project.status_detail = "processing", None
+            recut = True
         s.commit()
         data = project_to_dict(project)
+    if recut:
+        ctx.worker.enqueue("cut", project_id=project_id)
+    ctx.bus.publish({"type": "project", "id": project_id})
+    return data
+
+
+def clip_to_dict(c: Clip) -> dict:
+    return {
+        "id": c.id,
+        "moment_id": c.moment_id,
+        "rank": c.rank,
+        "part": c.part or 1,
+        "parts": c.parts or 1,
+        "start": c.start,
+        "end": c.end,
+        "segments": c.segments or [],
+        "duration": c.duration,
+        "category": c.category,
+        "score": c.score,
+        "valid": bool(c.valid),
+        "report": c.report or {},
+        "has_preview": bool(c.preview),
+        "review": c.review or "pending",
+        "overridden": bool(c.overridden),
+    }
+
+
+@router.get("/{project_id}/clips")
+def get_clips(project_id: int, ctx: AppContext = Depends(get_ctx)) -> list[dict]:
+    with ctx.session() as s:
+        if s.get(Project, project_id) is None:
+            raise HTTPException(404, "Project not found")
+        rows = s.scalars(
+            select(Clip).where(Clip.project_id == project_id).order_by(Clip.rank, Clip.part, Clip.id)
+        ).all()
+        return [clip_to_dict(c) for c in rows]
+
+
+@router.get("/{project_id}/clips/{clip_id}/preview")
+def get_clip_preview(project_id: int, clip_id: int, ctx: AppContext = Depends(get_ctx)) -> FileResponse:
+    with ctx.session() as s:
+        clip = s.get(Clip, clip_id)
+        path = clip.preview if clip and clip.project_id == project_id else None
+    if not path or not Path(path).is_file():
+        raise HTTPException(404, "No preview for this clip")
+    return FileResponse(path, media_type="video/mp4", headers={"Cache-Control": "no-cache"})
+
+
+@router.patch("/{project_id}/clips/{clip_id}")
+def review_clip(project_id: int, clip_id: int, body: ClipReview, ctx: AppContext = Depends(get_ctx)) -> dict:
+    """Approve or reject a clip. A clip that failed its checks can only be approved with an explicit override."""
+    with ctx.session() as s:
+        clip = s.get(Clip, clip_id)
+        if clip is None or clip.project_id != project_id:
+            raise HTTPException(404, "Clip not found")
+        if body.review == "approved" and not clip.valid and not body.override:
+            why = (clip.report or {}).get("no_fit") or "it did not pass the checks for a complete ending"
+            raise HTTPException(409, f"This clip is not approved automatically: {why} Approve it anyway to override.")
+        clip.review = body.review
+        clip.overridden = bool(body.review == "approved" and not clip.valid)
+        s.commit()
+        data = clip_to_dict(clip)
+    ctx.bus.publish({"type": "project", "id": project_id})
+    return data
+
+
+@router.post("/{project_id}/cut")
+def cut(project_id: int, ctx: AppContext = Depends(get_ctx)) -> dict:
+    """Cut the clips again from the moments already picked (no AI call)."""
+    with ctx.session() as s:
+        project = s.get(Project, project_id)
+        if project is None:
+            raise HTTPException(404, "Project not found")
+        if _busy(s, project_id):
+            raise HTTPException(409, "This project is still processing. Cancel its job first.")
+        if not s.scalar(select(func.count(Moment.id)).where(Moment.project_id == project_id)):
+            raise HTTPException(409, "No moments have been picked yet, so there is nothing to cut.")
+        project.status, project.status_detail = "processing", None
+        s.commit()
+        data = project_to_dict(project)
+    ctx.worker.enqueue("cut", project_id=project_id)
     ctx.bus.publish({"type": "project", "id": project_id})
     return data
 

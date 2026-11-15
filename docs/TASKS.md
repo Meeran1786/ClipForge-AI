@@ -1,108 +1,145 @@
-# ClipForge AI — Planned feature tasks
+# ClipForge AI — Feature tasks
 
-Requirements that are agreed but not built yet. The phase plan is in
-[ROADMAP.md](ROADMAP.md).
+Requirements that were agreed as a feature, with what is built and what is
+still to come. The phase plan is in [ROADMAP.md](ROADMAP.md).
 
 ## Smart Duration and context-aware clip splitting
 
-Requested 2026-11-15. **Not started. Do not begin until Phase 4 is finished and
-tested.** Principle: the chosen duration guides the editor; it never forces a
-cut through a sentence, a punchline, a reaction or an event.
+Requested 2026-11-15. **The core was built in Phase 5 (2026-11-15).** The
+parts that depend on captions, framing, music and export are still open and
+are marked with the phase they belong to. Principle: the chosen duration
+guides the editor; it never forces a cut through a sentence, a punchline, a
+reaction or an event.
+
+`[x]` built and tested · `[~]` built in part, see the note · `[ ]` not built
 
 ### Where each part lands
 
-| Part | Lands in | Needs first |
+| Part | Lands in | State |
 | --- | --- | --- |
-| Target duration, modes, ending detection, part splitting | Phase 5 (clip extraction) | Phase 3 word timings, silences, scene changes; Phase 4 moments |
-| Caption start/end checks, part labels clear of captions | Phase 6 (captions) | Phase 5 boundaries |
-| Part labels placed off faces and gameplay, consistent layout across parts | Phase 8 (framing and rendering) | Phase 6 captions |
-| Consistent music and audio levels across parts | Phase 7 (music) and Phase 8 | Phase 5 parts |
-| Pre-export validation report, per-part titles and hashtags | Phase 9 (QC and export) | Phases 5–8 |
-| Smart Duration panel | New Project (Phase 5), Clip Editor (Phases 6–8) | Phase 5 engine |
+| Target duration, modes, ending detection, part splitting | Phase 5 | Built |
+| Smart Duration panel on New Project, project settings, Settings | Phase 5 | Built |
+| Caption start/end checks, part labels clear of captions | Phase 6 | Not built |
+| Part labels placed off faces and gameplay, consistent layout across parts | Phase 8 | Not built |
+| Consistent music and audio levels across parts | Phases 7 and 8 | Not built |
+| Per-part titles and hashtags | Phase 9 | Not built |
+| Smart Duration panel in the Clip Editor, manual start/end adjustment | Phases 6–8 | Not built |
 
-The duration engine is one reusable module that takes a detected moment plus
-the transcript, word timings, silences and scene changes, and returns
-boundaries with reasons. It is never a plain time cut-off in FFmpeg.
+The engine is `backend/clipforge/duration.py`. It takes a picked moment plus
+the word timings, silences, scene changes and loud moments, and returns
+boundaries with a validation report. It makes no AI call and cuts no video;
+it is never a plain time cut-off in FFmpeg.
 
 ### Tasks
 
 Duration choice
-- [ ] Presets: 15, 20, 30, 35, 45, 60 and 90 seconds, plus a custom value.
-- [ ] Replace the current shortest/longest pair in project settings with a
-      target duration and a mode, keeping old projects working.
+- [x] Presets: 15, 20, 30, 35, 45, 60 and 90 seconds, plus a custom value
+      (10 to 180 seconds).
+- [x] The old shortest/longest pair is replaced by a target and a mode;
+      projects saved with the old pair still open (the longest becomes the
+      target).
 
 Modes
-- [ ] **Strict:** the clip stays within the target. Find a complete standalone
-      moment that fits; never cut dialogue or an event to fit. If none fits,
-      say that no valid clip was found.
-- [ ] **Smart (default):** the target is an aim with a configurable tolerance
-      (for example 35 s gives 33–38 s). Prefer natural endings.
-- [ ] **Flexible:** the target is a preference. The clip may run longer to keep
-      the whole moment (for example 45 s becomes 52 s), with the reason stated.
+- [x] **Strict:** never longer than the target. Setup is trimmed from the
+      start if that makes a complete clip fit; otherwise it reports that no
+      valid clip was found, with the shortest complete length.
+- [x] **Smart (default):** the target is an aim with a tolerance (default
+      10%, so 35 s gives about 32–39 s). Prefers natural endings.
+- [x] **Flexible:** the target is a preference; a clip may run to 1.6 times
+      the target to keep the whole moment, and states why.
 
 Ending detection, checked before a clip is final
-- [ ] The speaker finished the sentence.
-- [ ] A question got its answer.
-- [ ] A joke reached its punchline.
-- [ ] A reaction finished.
-- [ ] No important gameplay event is still in progress.
-- [ ] Another speaker is not about to respond.
-- [ ] The conversation reached a natural stopping point.
-- [ ] If the target ends mid-sentence: extend when possible; otherwise move
-      the start or pick another moment. Never export an unintended half sentence.
+- [x] The speaker finished the sentence. A full stop, question mark or
+      exclamation mark ends one; so does two seconds of silence after a word
+      with no comma, because speech-to-text sometimes omits the full stop.
+- [x] A question got its answer: a clip never ends on a question when a reply
+      follows within 2.5 seconds.
+- [~] A joke reached its punchline. The AI marks where the payoff is when it
+      picks the moment; the engine never ends before that line and never
+      splits right before it. The engine itself does not judge humour.
+- [~] A reaction finished. The engine carries on to lines that follow the
+      payoff without a pause, and will not end while a sudden loud moment is
+      under way. It cannot hear laughter or see a face.
+- [~] No important gameplay event is still in progress. Judged from sudden
+      loud moments only, not from what is on screen.
+- [~] Another speaker is not about to respond. Judged from word timings
+      (the next words start with no pause, or overlap the last ones). There
+      is no speaker identification.
+- [x] The conversation reached a natural stopping point: a clip ends early
+      instead of padding itself with a line from after a pause.
+- [x] If the target ends mid-sentence: extend when the mode allows;
+      otherwise move the start; otherwise refuse with a reason. A clip that
+      would drop more than half of the moment is refused, not shortened.
 
 Part splitting (Part 1, Part 2, …)
-- [ ] Option to split a long moment into connected Shorts, with target
-      duration, automatic or fixed number of parts, and a maximum.
-- [ ] Split only at natural boundaries: not mid-sentence, not during a
-      reaction, not before a punchline, not during an important event. Adjust
-      part lengths to reach such a boundary.
-- [ ] Drop a final part that is not meaningful on its own.
-- [ ] Continuity across parts: numbering, same layout, same caption style,
-      same audio levels, same music where used, no repeated dialogue, no missing
-      dialogue, no unexplained jumps.
+- [x] Option to split a long moment into connected parts, with a target
+      duration and a maximum number of parts (2 to 5). The number of parts is
+      chosen automatically. With splitting on, the AI is asked for moments
+      long enough to be worth splitting.
+- [x] Splits fall only where a sentence has finished: never mid-sentence,
+      never on a question whose answer follows, never while a loud moment is
+      under way, never right before the key line, and never before a short
+      afterthought to the previous line.
+- [x] A final part too short to stand alone is not produced; the lines join
+      the part before.
+- [x] Part numbering; no repeated dialogue, no missing dialogue, no overlap:
+      parts are consecutive runs of whole sentences.
+- [ ] Same layout, caption style, audio levels and music across parts
+      (Phases 6–8).
 - [ ] Optional on-screen PART 1 / PART 2 / PART 3 label that covers neither
-      faces nor important gameplay.
-- [ ] Titles and hashtags per part; continuation titles only when the parts
-      really belong together.
+      faces nor gameplay (Phase 8).
+- [ ] Titles and hashtags per part (Phase 9).
 
-Caption and video sync
+Caption and video sync (Phase 6, except where noted)
+- [x] Engine side: the clip always runs past the end of its last word and
+      starts before its first, so a caption for either can be shown in full;
+      a word timed past the end of the video is flagged.
 - [ ] First caption starts at the right time.
-- [ ] Last spoken word is shown in full; no caption ends before the speaker.
-- [ ] No caption lingers after the dialogue or is cut off by the video ending.
+- [ ] No caption ends before the speaker or lingers after the dialogue.
 - [ ] Captions never overlap the part label.
 
 Pre-export validation
-- [ ] Report per clip: requested duration, estimated actual duration, first
-      spoken word, last spoken word, sentence completion, event completion,
-      ending quality score, part continuity.
-- [ ] Reject clips with incomplete dialogue or broken continuity unless the
-      user explicitly overrides the warning.
+- [x] Report per clip: requested duration, actual duration, first spoken
+      word, last spoken word, sentence completion, question answered, event
+      completion, speakers overlapping at the end, ending quality score, and
+      for parts whether each continues cleanly from the one before.
+- [x] A clip that fails is marked "did not pass" and cannot be approved
+      without an explicit "Approve anyway".
 
 Interface
-- [ ] Smart Duration panel on New Project and in the Clip Editor: duration
-      selector, custom input, Strict / Smart / Flexible, part splitting switch,
-      maximum parts, context preservation setting.
-- [ ] Show the estimate before rendering, with the reason for any difference
-      (for example "Target 35 s, estimated 38 s: the final sentence and
-      reaction need 3 more seconds"), and let the user approve or adjust.
+- [x] Smart Duration panel on New Project, in a project's Clip settings and
+      in Settings (defaults): duration selector, custom input, Strict / Smart
+      / Flexible, tolerance, part splitting, maximum parts, context before
+      the moment, dead-air removal.
+- [x] Each clip shows target against actual length with the reason for any
+      difference, a preview, and Approve / Reject.
+- [~] "Adjust the result" is done by changing the settings, which re-cuts at
+      once without the AI. Dragging a clip's own start or end is not built.
+- [ ] The same panel inside the Clip Editor (the Clip Editor itself is
+      Phases 6–8).
 
-Test cases (each must be an automated test with known timings)
-- [ ] 1. Target 35 s, sentence finishes at 37 s.
-- [ ] 2. Target 30 s, punchline at 34 s.
-- [ ] 3. Target 45 s, reaction ends at 42 s.
-- [ ] 4. Target 60 s, gameplay event continues past 60 s.
-- [ ] 5. A 105 s moment split into connected parts.
-- [ ] 6. A speaker pauses before finishing a sentence.
-- [ ] 7. Several speakers talking at once.
-- [ ] 8. A caption overlapping the end of the video.
-- [ ] 9. A natural stopping point before the target.
-- [ ] 10. No valid standalone moment fits Strict mode.
+Test cases (automated, in `backend/tests/test_duration.py`)
+- [x] 1. Target 35 s, sentence finishes at 37 s.
+- [x] 2. Target 30 s, punchline at 34 s.
+- [x] 3. Target 45 s, reaction ends at 42 s.
+- [x] 4. Target 60 s, gameplay event continues past 60 s.
+- [x] 5. A 105 s moment split into connected parts.
+- [x] 6. A speaker pauses before finishing a sentence.
+- [x] 7. Several speakers talking at once.
+- [~] 8. A caption overlapping the end of the video: the engine side is
+      tested (clip never runs past the video, last word fully inside).
+      Caption drawing is Phase 6.
+- [x] 9. A natural stopping point before the target.
+- [x] 10. No valid standalone moment fits Strict mode.
 
-### Known limits to plan around
+Also tested: a randomised check over many generated transcripts that no valid
+clip ever cuts a word or exceeds its mode's limit, and a live run of 87 clips
+under 30 setting combinations checked against real word timings.
 
-- There is no speaker identification yet (Phase 3), so "another speaker is
-  about to respond" and "several speakers at once" can only be judged from
-  the transcript text and overlapping word timings until that exists.
-- "Joke reached its punchline" and "question got its answer" are judgements
-  by the AI model; the word timings and silences then place the exact cut.
+### Known limits
+
+- No speaker identification, so anything about "who is speaking" is inferred
+  from timing.
+- Checked on one synthetic spoken video. Not yet run on real stream footage.
+- In Smart mode a part can exceed the tolerance when a moment needs more
+  parts than the maximum allows. The clip says so in its reasons.

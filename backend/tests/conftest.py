@@ -106,7 +106,7 @@ class FakeTranscriber:
             raise RuntimeError("speech engine crashed")
         if on_progress:
             on_progress(0.5)
-        words = [Word(0.2, 0.5, "hello"), Word(0.6, 0.9, "chat")]
+        words = [Word(0.2, 0.5, "hello"), Word(0.6, 0.9, "chat.")]  # a finished sentence
         return [Segment(0.2, 0.9, f"hello chat ({seconds:.1f}s chunk)", words)], language or "en"
 
 

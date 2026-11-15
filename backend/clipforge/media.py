@@ -189,6 +189,42 @@ def extract_audio(
     return _finish_part(part, dest)
 
 
+def render_ranges(
+    settings: Settings, src: Path, dest: Path, ranges: list[tuple[float, float]], has_audio: bool = True
+) -> Path:
+    """Cut the given time ranges out of `src`, in order, into one small MP4.
+
+    Used for review previews. Frames are re-encoded so the cut lands exactly on
+    the requested times, not on the nearest keyframe.
+    """
+    if not settings.ffmpeg:
+        raise MediaError("ffmpeg is not installed (expected in tools\\ffmpeg)")
+    ranges = [(float(a), float(b)) for a, b in ranges if b - a > 0.02]
+    if not ranges:
+        raise MediaError("Nothing to render: the clip has no length")
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    part = dest.with_name(dest.stem + ".part" + dest.suffix)
+
+    chains, labels = [], ""
+    for n, (a, b) in enumerate(ranges):
+        chains.append(f"[0:v]trim=start={a:.3f}:end={b:.3f},setpts=PTS-STARTPTS[v{n}]")
+        labels += f"[v{n}]"
+        if has_audio:
+            chains.append(f"[0:a]atrim=start={a:.3f}:end={b:.3f},asetpts=PTS-STARTPTS[a{n}]")
+            labels += f"[a{n}]"
+    chains.append(f"{labels}concat=n={len(ranges)}:v=1:a={1 if has_audio else 0}[v]" + ("[a]" if has_audio else ""))
+    cmd = [
+        settings.ffmpeg, "-hide_banner", "-loglevel", "error", "-y", "-i", str(src),
+        "-filter_complex", ";".join(chains), "-map", "[v]",
+    ]
+    if has_audio:
+        cmd += ["-map", "[a]", "-c:a", "aac", "-b:a", "96k"]
+    cmd += ["-c:v", "libx264", "-preset", "veryfast", "-crf", "26", "-pix_fmt", "yuv420p",
+            "-movflags", "+faststart", str(part)]
+    run(cmd, timeout=600)
+    return _finish_part(part, dest)
+
+
 def make_thumbnail(settings: Settings, src: Path, dest: Path, at_seconds: float) -> Path:
     if not settings.ffmpeg:
         raise MediaError("ffmpeg is not installed (expected in tools\\ffmpeg)")

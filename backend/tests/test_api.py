@@ -44,7 +44,8 @@ def test_local_project_is_probed_and_survives_a_restart(client, settings, sample
     assert thumb.status_code == 200 and thumb.content[:2] == b"\xff\xd8"  # JPEG
 
     stats = client.get("/api/stats").json()
-    assert stats["videos_processed"] == 1 and stats["clips_total"] == 0
+    assert stats["videos_processed"] == 1 and stats["clips_total"] == 1
+    assert stats["clips_exported"] == 0
 
     # A second app on the same data folder is what a restart looks like.
     with TestClient(create_app(settings, configure_logging=False)) as again:
@@ -105,13 +106,38 @@ def test_option_limits(client):
     def post(options):
         return client.post("/api/projects", json={"source": "url", "url": "https://youtu.be/x", "options": options})
 
-    assert post({"min_duration": 70, "max_duration": 30}).status_code == 422
     assert post({"categories": ["nonsense"]}).status_code == 422
     assert post({"categories": []}).status_code == 422
-    assert post({"max_duration": 300}).status_code == 422
-    ok = post({"categories": ["rage", "funny"], "max_clips": 3, "min_score": 80})
+    assert post({"target_duration": 5}).status_code == 422
+    assert post({"target_duration": 600}).status_code == 422
+    assert post({"duration_mode": "whenever"}).status_code == 422
+    assert post({"max_parts": 9}).status_code == 422
+    assert post({"tolerance_pct": 80}).status_code == 422
+    assert post({"context": "everything"}).status_code == 422
+    ok = post({"categories": ["rage", "funny"], "max_clips": 3, "min_score": 80,
+               "target_duration": 37, "duration_mode": "flexible", "split_parts": True, "max_parts": 4})
     assert ok.status_code == 201
-    assert ok.json()["options"]["categories"] == ["funny", "rage"]
+    options = ok.json()["options"]
+    assert options["categories"] == ["funny", "rage"]
+    assert (options["target_duration"], options["duration_mode"], options["max_parts"]) == (37, "flexible", 4)
+    assert options["split_parts"] is True and options["trim_silence"] is True
+
+
+def test_smart_duration_defaults(client):
+    options = client.post("/api/projects", json={"source": "url", "url": "https://youtu.be/x"}).json()["options"]
+    assert options["target_duration"] == 45 and options["duration_mode"] == "smart"
+    assert options["tolerance_pct"] == 10 and options["split_parts"] is False and options["context"] == "balanced"
+
+
+def test_a_project_saved_with_the_old_length_pair_still_opens(client):
+    """Before Smart Duration, projects stored shortest/longest. The longest becomes the target."""
+    made = client.post(
+        "/api/projects",
+        json={"source": "url", "url": "https://youtu.be/x", "options": {"min_duration": 20, "max_duration": 60}},
+    )
+    assert made.status_code == 201
+    options = made.json()["options"]
+    assert options["target_duration"] == 60 and "max_duration" not in options
 
 
 def test_defaults_round_trip(client):

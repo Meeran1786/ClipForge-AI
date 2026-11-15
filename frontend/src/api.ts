@@ -68,6 +68,15 @@ export interface AnalysisSummary {
     visual_failed?: number
     note?: string
   } | null
+  clips: {
+    made: number
+    not_valid: number
+    duplicates_dropped: number
+    multi_part_moments: number
+    target_seconds: number
+    mode: DurationMode
+    split: boolean
+  } | null
 }
 
 export interface Moment {
@@ -130,8 +139,55 @@ export interface ProjectOptions {
   categories: string[]
   max_clips: number
   min_score: number
-  min_duration: number
-  max_duration: number
+  target_duration: number
+  duration_mode: DurationMode
+  tolerance_pct: number
+  split_parts: boolean
+  max_parts: number
+  context: ContextLevel
+  trim_silence: boolean
+}
+
+export type DurationMode = 'strict' | 'smart' | 'flexible'
+export type ContextLevel = 'tight' | 'balanced' | 'full'
+
+export interface ClipReport {
+  requested_seconds: number
+  actual_seconds: number
+  mode: DurationMode
+  first_word?: string | null
+  last_word?: string | null
+  sentence_complete?: boolean | null
+  question_answered?: boolean
+  event_complete?: boolean | null
+  speakers_overlap_at_end?: boolean
+  ending_quality?: number | null
+  last_word_fully_inside?: boolean
+  dead_air_removed?: number
+  continues_from_previous?: boolean
+  repeats_dialogue?: boolean
+  skips_dialogue?: boolean
+  reasons: string[]
+  problems: string[]
+  no_fit?: string
+}
+
+export interface Clip {
+  id: number
+  moment_id: number | null
+  rank: number | null
+  part: number
+  parts: number
+  start: number
+  end: number
+  duration: number
+  category: string | null
+  score: number | null
+  valid: boolean
+  report: ClipReport
+  has_preview: boolean
+  review: 'pending' | 'approved' | 'rejected'
+  overridden: boolean
 }
 
 export interface Project {
@@ -249,6 +305,13 @@ export const api = {
   detect: (id: number) => post<Project>(`/api/projects/${id}/detect`),
   updateOptions: (id: number, o: ProjectOptions) =>
     request<Project>(`/api/projects/${id}/options`, { method: 'PATCH', body: JSON.stringify(o) }),
+  clips: (id: number) => request<Clip[]>(`/api/projects/${id}/clips`),
+  cut: (id: number) => post<Project>(`/api/projects/${id}/cut`),
+  reviewClip: (projectId: number, clipId: number, review: Clip['review'], override = false) =>
+    request<Clip>(`/api/projects/${projectId}/clips/${clipId}`, {
+      method: 'PATCH',
+      body: JSON.stringify({ review, override }),
+    }),
   weights: () => request<Weights>('/api/settings/weights'),
   saveWeights: (w: Record<string, number>) =>
     request<Weights>('/api/settings/weights', { method: 'PUT', body: JSON.stringify(w) }),

@@ -125,9 +125,28 @@ class Clip(Base):
     project_id: Mapped[int] = mapped_column(
         ForeignKey("projects.id", ondelete="CASCADE"), index=True
     )
-    # candidate | rendered | approved | rejected | exported
-    status: Mapped[str] = mapped_column(String(20), default="candidate")
+    # cut | rendered | exported   (how far through production it is)
+    status: Mapped[str] = mapped_column(String(20), default="cut")
     created_at: Mapped[datetime] = mapped_column(default=utcnow)
+
+    # Phase 5: where it is cut, and why. All nullable so older databases upgrade in place.
+    moment_id: Mapped[int | None] = mapped_column(Integer, default=None)
+    rank: Mapped[int | None] = mapped_column(Integer, default=None)  # the moment's rank
+    part: Mapped[int | None] = mapped_column(Integer, default=None)
+    parts: Mapped[int | None] = mapped_column(Integer, default=None)
+    start: Mapped[float | None] = mapped_column(Float, default=None)
+    end: Mapped[float | None] = mapped_column(Float, default=None)
+    # kept time ranges in order; dead air between them is left out
+    segments: Mapped[list[Any] | None] = mapped_column(JSON, default=None)
+    duration: Mapped[float | None] = mapped_column(Float, default=None)
+    category: Mapped[str | None] = mapped_column(String(30), default=None)
+    score: Mapped[int | None] = mapped_column(Integer, default=None)
+    valid: Mapped[bool | None] = mapped_column(default=None)  # passed the context checks
+    report: Mapped[dict[str, Any] | None] = mapped_column(JSON, default=None)
+    preview: Mapped[str | None] = mapped_column(Text, default=None)
+    # pending | approved | rejected   (the user's decision)
+    review: Mapped[str | None] = mapped_column(String(20), default="pending")
+    overridden: Mapped[bool | None] = mapped_column(default=False)  # approved despite failing a check
 
     project: Mapped[Project] = relationship(back_populates="clips")
 
@@ -163,6 +182,10 @@ class Moment(Base):
     start: Mapped[float] = mapped_column(Float)
     end: Mapped[float] = mapped_column(Float)
     peak: Mapped[float] = mapped_column(Float)
+    # the span the AI itself picked, before it was roughly fitted to a length;
+    # the Smart Duration engine cuts from this (None on moments from older runs)
+    core_start: Mapped[float | None] = mapped_column(Float, default=None)
+    core_end: Mapped[float | None] = mapped_column(Float, default=None)
     category: Mapped[str] = mapped_column(String(30))
     score: Mapped[int] = mapped_column(Integer, index=True)
     # seven 0-10 sub-scores; the viral score is computed from these in code

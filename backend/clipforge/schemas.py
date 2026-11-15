@@ -4,8 +4,9 @@ from __future__ import annotations
 
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
+from .duration import MAX_TARGET, MIN_TARGET, DurationSettings
 from .models import Project, iso
 from .rights import download_blocker
 
@@ -20,11 +21,32 @@ RightsStatus = Literal["own", "licensed", "creator_permission", "unverified"]
 class ProjectOptions(BaseModel):
     """What to look for and how many clips to make. Also the saved defaults."""
 
+    model_config = ConfigDict(extra="ignore")  # older projects carry min_duration / max_duration
+
     categories: list[str] = Field(default_factory=lambda: list(CATEGORIES))
     max_clips: int = Field(default=8, ge=1, le=50)
     min_score: int = Field(default=60, ge=0, le=100)
-    min_duration: int = Field(default=20, ge=15, le=90)
-    max_duration: int = Field(default=60, ge=15, le=90)
+
+    # Smart Duration: the target guides the cut, it never forces one.
+    target_duration: int = Field(default=45, ge=MIN_TARGET, le=MAX_TARGET)
+    duration_mode: Literal["strict", "smart", "flexible"] = "smart"
+    tolerance_pct: int = Field(default=10, ge=0, le=30)  # Smart mode only
+    split_parts: bool = False
+    max_parts: int = Field(default=3, ge=2, le=5)
+    context: Literal["tight", "balanced", "full"] = "balanced"
+    trim_silence: bool = True
+
+    @model_validator(mode="before")
+    @classmethod
+    def _from_old_length_pair(cls, data: Any) -> Any:
+        """Projects made before Smart Duration stored a shortest/longest pair."""
+        if isinstance(data, dict) and "target_duration" not in data and "max_duration" in data:
+            try:
+                longest = int(data["max_duration"])
+            except (TypeError, ValueError):
+                return data
+            data = {**data, "target_duration": max(MIN_TARGET, min(MAX_TARGET, longest))}
+        return data
 
     @field_validator("categories")
     @classmethod
@@ -36,11 +58,20 @@ class ProjectOptions(BaseModel):
             raise ValueError("Pick at least one category")
         return [c for c in CATEGORIES if c in value]  # stable order, no duplicates
 
-    @model_validator(mode="after")
-    def _duration_order(self) -> "ProjectOptions":
-        if self.min_duration > self.max_duration:
-            raise ValueError("Shortest clip length cannot be longer than the longest")
-        return self
+    def duration_settings(self) -> DurationSettings:
+        return DurationSettings(
+            target=float(self.target_duration), mode=self.duration_mode, tolerance=self.tolerance_pct / 100,
+            split=self.split_parts, max_parts=self.max_parts, context=self.context,
+            trim_silence=self.trim_silence,
+        )
+
+
+def normalise_options(raw: dict[str, Any] | None) -> dict[str, Any]:
+    """Stored options in today's shape, whatever version of the app saved them."""
+    try:
+        return ProjectOptions(**(raw or {})).model_dump()
+    except ValueError:
+        return ProjectOptions().model_dump()
 
 
 class ProjectCreate(BaseModel):
@@ -64,6 +95,11 @@ class AttachFile(BaseModel):
     path: str
 
 
+class ClipReview(BaseModel):
+    review: Literal["pending", "approved", "rejected"]
+    override: bool = False  # approve a clip even though it failed a context check
+
+
 def project_to_dict(p: Project, *, clip_count: int = 0) -> dict[str, Any]:
     is_link = p.source_kind != "local"
     analysis = dict(p.analysis or {})
@@ -75,6 +111,7 @@ def project_to_dict(p: Project, *, clip_count: int = 0) -> dict[str, Any]:
             "video": analysis.get("video"),
             "transcript": transcript or None,
             "moments": analysis.get("moments"),
+            "clips": analysis.get("clips"),
         },
         "source_meta": p.source_meta,
         "has_proxy": bool(p.proxy_path),
@@ -93,7 +130,7 @@ def project_to_dict(p: Project, *, clip_count: int = 0) -> dict[str, Any]:
         "creator": p.creator,
         "rights_status": p.rights_status,
         "rights_note": p.rights_note,
-        "options": p.options or {},
+        "options": normalise_options(p.options),
         "media": p.media,
         "has_thumbnail": bool(p.thumbnail),
         "status": p.status,

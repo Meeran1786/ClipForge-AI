@@ -2,6 +2,7 @@ import { useQuery } from '@tanstack/react-query'
 import { type MouseEvent, useEffect, useMemo, useRef, useState } from 'react'
 import { api, type Moment, type Project, type Signals, type TranscriptLine } from '../api'
 import { duration as clock } from '../format'
+import { ClipsPanel } from './ClipsPanel'
 import { MomentsPanel } from './MomentsPanel'
 import { Empty, Section, Spinner } from '../ui'
 
@@ -256,6 +257,11 @@ export function AnalysisWorkspace({ project, busy }: { project: Project; busy: b
     enabled: Boolean(a.moments),
   })
   const momentList = moments.data ?? []
+  const clips = useQuery({
+    queryKey: ['clips', project.id, project.updated_at],
+    queryFn: () => api.clips(project.id),
+    enabled: Boolean(a.clips),
+  })
 
   const seek = (t: number) => {
     const v = videoRef.current
@@ -325,6 +331,9 @@ export function AnalysisWorkspace({ project, busy }: { project: Project; busy: b
     </div>
     <div className="mb-6">
       <MomentsPanel project={project} moments={momentList} busy={busy} onPlay={play} />
+    </div>
+    <div className="mb-6">
+      <ClipsPanel project={project} clips={clips.data ?? []} busy={busy} />
     </div>
     </>
   )

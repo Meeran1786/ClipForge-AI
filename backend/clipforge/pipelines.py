@@ -33,16 +33,19 @@ from .analysis.transcript import (
 from .analysis.video_signals import analyse_video
 from .ingest import PLATFORM_LABELS, IngestRefused, source_for
 from .jobs.engine import Pipeline, StageContext, StageDef
+from .duration import ClipPlan, Context, DurationSettings, Word, plan_moment
 from .media import (
     MediaError,
     extract_audio,
     make_proxy,
     make_thumbnail,
     probe_media,
+    render_ranges,
     run,
     tool_version,
 )
-from .models import Job, Moment, Project, Setting, TranscriptSegment
+from .models import Clip, Job, Moment, Project, Setting, TranscriptSegment
+from .schemas import ProjectOptions, normalise_options
 from .moments import Line, clean_weights, detect_moments
 from .moments import select as pick_selected
 from .rights import download_blocker, write_rights_file
@@ -360,6 +363,7 @@ def _moments(ctx: StageContext) -> dict:
                 project_id=ctx.project_id, start=c.start, end=c.end, peak=c.peak, category=c.category,
                 score=c.score, subscores=c.subscores, reason=c.reason, excerpt=c.excerpt, visual=c.visual,
                 visual_checked=c.visual_checked, source=c.source, rank=c.rank, selected=c.selected,
+                core_start=c.core_start, core_end=c.core_end,
             )
             for c in ranked
         )
@@ -372,6 +376,142 @@ def _moments(ctx: StageContext) -> dict:
         message += f" ({notes['visual_failed']} picture check(s) failed; those scores come from the words alone)"
     ctx.report(1.0, message)
     return notes
+
+
+CLIP_OVERLAP_LIMIT = 0.5  # two clips sharing more than this much of the shorter one show the same event
+
+
+def _clip_dir(settings, project_id: int) -> Path:
+    return settings.project_dir(project_id) / "clips"
+
+
+def clear_clips(s: Session, settings, project_id: int) -> None:
+    s.execute(delete(Clip).where(Clip.project_id == project_id))
+    shutil.rmtree(_clip_dir(settings, project_id), ignore_errors=True)
+
+
+def _plan_without_speech(start: float, end: float, st: DurationSettings, total: float) -> ClipPlan:
+    """A moment nobody speaks in (found by sound alone) is cut by time: there are no sentences to respect."""
+    end = min(end, start + st.high, total) if total else min(end, start + st.high)
+    length = round(end - start, 2)
+    return ClipPlan(round(start, 2), round(end, 2), [(round(start, 2), round(end, 2))], length, length >= 3.0, {
+        "requested_seconds": st.target, "actual_seconds": length, "mode": st.mode,
+        "first_word": None, "last_word": None, "sentence_complete": None,
+        "question_answered": True, "event_complete": None, "speakers_overlap_at_end": False,
+        "ending_quality": None, "start_quality": None, "last_word_fully_inside": True,
+        "setup_sentences_dropped": 0, "dead_air_removed": 0,
+        "reasons": ["Nobody speaks in this stretch, so it is cut by time around the loud moment."],
+        "problems": [],
+    })
+
+
+def _clips(ctx: StageContext) -> dict:
+    """Place each selected moment's exact cut with the Smart Duration engine and render a preview. No AI."""
+    with ctx.session() as s:
+        project = s.get(Project, ctx.project_id)
+        options = ProjectOptions(**normalise_options(project.options))
+        proxy = Path(project.proxy_path) if project.proxy_path else None
+        media = dict(project.media or {})
+        chosen = s.scalars(
+            select(Moment).where(Moment.project_id == ctx.project_id, Moment.selected.is_(True)).order_by(Moment.rank)
+        ).all()
+        moments = [
+            {"id": m.id, "rank": m.rank, "category": m.category, "score": m.score, "peak": m.peak,
+             "start": m.core_start if m.core_start is not None else m.start,
+             "end": m.core_end if m.core_end is not None else m.end}
+            for m in chosen
+        ]
+        rows = s.scalars(
+            select(TranscriptSegment)
+            .where(TranscriptSegment.project_id == ctx.project_id)
+            .order_by(TranscriptSegment.start, TranscriptSegment.id)
+        ).all()
+        words = sorted(
+            (Word(float(w["s"]), float(w["e"]), str(w["w"])) for r in rows for w in (r.words or []) if w.get("w")),
+            key=lambda w: (w.s, w.e),
+        )
+    folder = ctx.settings.project_dir(ctx.project_id)
+
+    def load(name: str) -> dict:
+        path = folder / name
+        return json.loads(path.read_text(encoding="utf-8")) if path.is_file() else {}
+
+    audio, video = load("audio_signals.json"), load("video_signals.json")
+    total = float(media.get("duration") or audio.get("duration") or 0)
+    context = Context(
+        words=words,
+        silences=[(float(a), float(b)) for a, b in audio.get("silences") or []],
+        cuts=[float(t) for t in video.get("cuts") or []],
+        events=[float(e["t"]) for e in audio.get("events") or []],
+        duration=total,
+    )
+    st = options.duration_settings()
+
+    planned: list[tuple[dict, ClipPlan]] = []
+    accepted: list[ClipPlan] = []
+    duplicates = 0
+    for moment in moments:
+        ctx.check()
+        spoken = any(moment["start"] - 1.0 <= w.s <= moment["end"] + 1.0 for w in words)
+        plans = (
+            plan_moment(context, moment["start"], moment["end"], moment["peak"], st)
+            if spoken else [_plan_without_speech(moment["start"], moment["end"], st, total)]
+        )
+        # two moments can be refined onto the same stretch: keep the better-ranked one
+        clash = any(
+            min(p.end, a.end) - max(p.start, a.start) > CLIP_OVERLAP_LIMIT * min(p.end - p.start, a.end - a.start)
+            for p in plans if p.valid for a in accepted
+        )
+        if clash:
+            duplicates += 1
+            continue
+        accepted += [p for p in plans if p.valid]
+        planned += [(moment, p) for p in plans]
+
+    with ctx.session() as s:
+        clear_clips(s, ctx.settings, ctx.project_id)
+        s.commit()
+
+    out_dir = _clip_dir(ctx.settings, ctx.project_id)
+    made = 0
+    records: list[Clip] = []
+    for n, (moment, plan) in enumerate(planned):
+        ctx.report(n / max(len(planned), 1), f"Cutting clip {n + 1} of {len(planned)}")
+        preview = None
+        if proxy and proxy.is_file() and plan.duration >= 1.0:
+            dest = out_dir / f"clip_{moment['rank']:02d}_part{plan.part}.mp4"
+            render_ranges(ctx.settings, proxy, dest, plan.segments, has_audio=bool(media.get("has_audio", True)))
+            preview = str(dest)
+        made += plan.valid
+        records.append(Clip(
+            project_id=ctx.project_id, status="cut", moment_id=moment["id"], rank=moment["rank"],
+            part=plan.part, parts=plan.parts, start=plan.start, end=plan.end,
+            segments=[list(seg) for seg in plan.segments], duration=plan.duration,
+            category=moment["category"], score=moment["score"], valid=plan.valid, report=plan.report,
+            preview=preview, review="pending", overridden=False,
+        ))
+
+    summary = {
+        "made": made,
+        "not_valid": len(records) - made,
+        "duplicates_dropped": duplicates,
+        "multi_part_moments": len({r.moment_id for r in records if (r.parts or 1) > 1}),
+        "target_seconds": st.target, "mode": st.mode, "split": st.split,
+    }
+    with ctx.session() as s:
+        s.add_all(records)
+        project = s.get(Project, ctx.project_id)
+        project.analysis = {**(project.analysis or {}), "clips": summary}
+        s.commit()
+    ctx.publish_project()
+
+    message = f"{made} clip(s) cut"
+    if summary["not_valid"]:
+        message += f", {summary['not_valid']} could not be cut cleanly"
+    if duplicates:
+        message += f", {duplicates} dropped as repeats of a better clip"
+    ctx.report(1.0, message)
+    return summary
 
 
 def reselect(s: Session, project: Project) -> None:
@@ -388,6 +528,7 @@ def reset_analysis(s: Session, settings, project: Project) -> None:
     """Forget a previous analysis so it can be run again from scratch."""
     s.execute(delete(TranscriptSegment).where(TranscriptSegment.project_id == project.id))
     s.execute(delete(Moment).where(Moment.project_id == project.id))
+    clear_clips(s, settings, project.id)
     project.analysis = None
     for name in ("audio_signals.json", "video_signals.json"):
         (settings.project_dir(project.id) / name).unlink(missing_ok=True)
@@ -408,6 +549,11 @@ def _ingest_finished(s: Session, job: Job) -> None:
             project.status_detail = (
                 f"Moments were not picked: {job.error}. The video, timeline and transcript are ready. "
                 "Use Retry to try again."
+            )
+        elif failed_stage == "clips":
+            project.status = "ready"
+            project.status_detail = (
+                f"Clips were not cut: {job.error}. The picked moments are still there. Use Retry to try again."
             )
         else:
             project.status = "failed"
@@ -437,8 +583,13 @@ _ANALYSE = [
     StageDef("transcript", "Transcribe speech", _transcript),
 ]
 
+_CUT = [
+    StageDef("clips", "Cut the clips", _clips),
+]
+
 _DETECT = [
     StageDef("moments", "Find the best moments", _moments),
+    *_CUT,
 ]
 
 
@@ -530,6 +681,8 @@ PIPELINES: dict[str, Pipeline] = {
         stages=[*_ANALYSE, *_DETECT], on_finish=_ingest_finished, on_retry=_ingest_retried
     ),
     "detect": Pipeline(stages=list(_DETECT), on_finish=_ingest_finished, on_retry=_ingest_retried),
+    # cutting needs no AI, so it is re-run on its own whenever the duration settings change
+    "cut": Pipeline(stages=list(_CUT), on_finish=_ingest_finished, on_retry=_ingest_retried),
     "ingest_url": Pipeline(
         stages=[
             StageDef("metadata", "Look up the video", _metadata, max_attempts=3),
