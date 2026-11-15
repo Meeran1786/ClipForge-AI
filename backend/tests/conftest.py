@@ -6,6 +6,7 @@ file dialog: every app is built on a temporary folder, and the picker is stubbed
 
 from __future__ import annotations
 
+import re
 import shutil
 import subprocess
 import time
@@ -22,6 +23,7 @@ from clipforge.config import REPO_ROOT, Settings
 from clipforge.db import make_engine, make_session_factory
 from clipforge.events import EventBus
 from clipforge.jobs import engine as engine_module
+from clipforge.moments import SUBSCORES
 
 
 @pytest.fixture(autouse=True)
@@ -114,6 +116,60 @@ def fake_stt(monkeypatch) -> FakeTranscriber:
     fake = FakeTranscriber()
     monkeypatch.setattr(pipelines, "make_transcriber", lambda _settings: fake)
     monkeypatch.setattr(pipelines, "model_is_downloaded", lambda _settings: True)
+    return fake
+
+
+class FakeReasoner:
+    """Stands in for the AI model. Answers from the task text alone, so tests are offline and free."""
+
+    name = "fake-ai"
+
+    def __init__(self) -> None:
+        self.text_tasks: list[str] = []
+        self.visual_tasks: list[str] = []
+        self.images_seen: list[list[str]] = []
+        self.text_answer = None  # callable(line_numbers) -> dict, or None for the default
+        self.visual_answer = None  # callable(moment_ids) -> dict, or None for the default
+        self.fail_text: Exception | None = None
+        self.fail_visual: Exception | None = None
+
+    def ask_json(self, task, schema, images=None, check=None):
+        if check:
+            check()
+        if images:
+            self.visual_tasks.append(task)
+            self.images_seen.append([p.name for p in images])
+            assert all(p.is_file() and p.stat().st_size > 0 for p in images), "sheets must exist when sent"
+            if self.fail_visual:
+                raise self.fail_visual
+            ids = [int(n) for n in re.findall(r"^Moment (\d+):", task, flags=re.M)]
+            if self.visual_answer:
+                return self.visual_answer(ids)
+            scores = {k: 6 for k in SUBSCORES}
+            return {"moments": [
+                {"id": i, "seen": "A person reacts at a desk.", "picture_useful": True, "keep": True,
+                 "category": "funny", "scores": scores}
+                for i in ids
+            ]}
+        self.text_tasks.append(task)
+        if self.fail_text:
+            raise self.fail_text
+        numbers = [int(n) for n in re.findall(r"^L(\d+) \[", task, flags=re.M)]
+        if self.text_answer:
+            return self.text_answer(numbers)
+        if not numbers:
+            return {"moments": []}
+        return {"moments": [{
+            "start_line": numbers[0], "end_line": numbers[-1], "peak_line": numbers[-1],
+            "category": "funny", "scores": {k: 7 for k in SUBSCORES}, "reason": "They say hello to chat.",
+        }]}
+
+
+@pytest.fixture(autouse=True)
+def fake_ai(monkeypatch) -> FakeReasoner:
+    """No test reaches a real AI provider."""
+    fake = FakeReasoner()
+    monkeypatch.setattr(pipelines, "make_reasoner", lambda _settings: fake)
     return fake
 
 

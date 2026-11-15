@@ -1,8 +1,9 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { type ReactNode, useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
-import { ApiError, api, type Project } from '../api'
+import { ApiError, api, type Project, type ProjectOptions } from '../api'
 import { AnalysisWorkspace } from '../components/AnalysisWorkspace'
+import { OptionsForm, optionsError } from '../components/OptionsForm'
 import { Thumb } from '../components/ProjectRow'
 import { RightsFields, type RightsValue } from '../components/RightsFields'
 import { ago, CATEGORY_LABEL, duration, fileSize, PROJECT_STATUS, RIGHTS, SOURCE_LABEL } from '../format'
@@ -87,6 +88,78 @@ function RightsSection({ project }: { project: Project }) {
             </p>
           )}
         </>
+      )}
+    </Section>
+  )
+}
+
+function ClipSettings({ project }: { project: Project }) {
+  const qc = useQueryClient()
+  const system = useQuery({ queryKey: ['system'], queryFn: api.system, staleTime: 60_000 })
+  const [draft, setDraft] = useState<ProjectOptions | null>(null)
+  const save = useMutation({
+    mutationFn: (o: ProjectOptions) => api.updateOptions(project.id, o),
+    onSuccess: (updated) => {
+      qc.setQueryData(['project', project.id], updated)
+      void qc.invalidateQueries({ queryKey: ['projects'] })
+      setDraft(null)
+    },
+  })
+  const o = project.options
+  const problem = draft ? optionsError(draft) : null
+
+  return (
+    <Section
+      title="Clip settings"
+      aside={
+        draft === null && (
+          <button
+            className="text-xs text-soft hover:text-ink"
+            onClick={() => {
+              save.reset()
+              setDraft(o)
+            }}
+          >
+            Edit
+          </button>
+        )
+      }
+    >
+      {draft && system.data ? (
+        <>
+          <OptionsForm value={draft} categories={system.data.categories} onChange={setDraft} />
+          <p className="hint">
+            Saving re-ranks the moments already picked. It does not ask the AI again; use “Pick moments again”
+            for that.
+          </p>
+          {save.isError && (
+            <div className="mt-3">
+              <ErrorNote>{save.error.message}</ErrorNote>
+            </div>
+          )}
+          <div className="mt-4 flex items-center gap-2">
+            <button
+              className="btn btn-primary"
+              onClick={() => save.mutate(draft)}
+              disabled={problem !== null || save.isPending}
+            >
+              {save.isPending ? 'Saving…' : 'Save'}
+            </button>
+            <button className="btn" onClick={() => setDraft(null)} disabled={save.isPending}>
+              Cancel
+            </button>
+            {problem && <span className="text-sm text-soft">{problem}</span>}
+          </div>
+        </>
+      ) : (
+        <dl className="divide-y divide-line">
+          <Fact label="Looking for">{o.categories.map((c) => CATEGORY_LABEL[c] ?? c).join(', ')}</Fact>
+          <Fact label="Maximum clips">{o.max_clips}</Fact>
+          <Fact label="Minimum score">{o.min_score}</Fact>
+          <Fact label="Clip length">
+            {o.min_duration}–{o.max_duration} sec
+          </Fact>
+        </dl>
       )}
     </Section>
   )
@@ -292,16 +365,7 @@ export default function ProjectDetail() {
 
           <RightsSection project={p} />
 
-          <Section title="Clip settings">
-            <dl className="divide-y divide-line">
-              <Fact label="Looking for">{p.options.categories.map((c) => CATEGORY_LABEL[c] ?? c).join(', ')}</Fact>
-              <Fact label="Maximum clips">{p.options.max_clips}</Fact>
-              <Fact label="Minimum score">{p.options.min_score}</Fact>
-              <Fact label="Clip length">
-                {p.options.min_duration}–{p.options.max_duration} sec
-              </Fact>
-            </dl>
-          </Section>
+          <ClipSettings project={p} />
         </div>
 
         <div className="space-y-6 lg:col-span-3">
@@ -340,10 +404,10 @@ export default function ProjectDetail() {
 
           {canAttach && <AttachFile project={p} />}
 
-          <Section title="Detected moments" aside={<Badge tone="warn">Not built yet · Phase 4</Badge>}>
-            <Empty title="No moments yet">
-              The timeline and transcript above are the raw material. Picking the best moments, with a viral score
-              and category for each, is built in Phase 4.
+          <Section title="Clips" aside={<Badge tone="warn">Not built yet · Phase 5</Badge>}>
+            <Empty title="No clips yet">
+              The picked moments above are rough ranges. Cutting them cleanly at sentence and pause boundaries,
+              with the Smart Duration options, is built in Phase 5.
             </Empty>
           </Section>
         </div>

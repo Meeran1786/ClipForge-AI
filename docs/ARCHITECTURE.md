@@ -215,6 +215,23 @@ still inconclusive: the tool opened the video file, then the service returned
 overhead before any video was looked at. Phase 4 starts by settling this, and
 falls back to route 2 if route 1 cannot see video or stays unreliable.
 
+Settled in Phase 4 (2026-11-15): the sign-in route works, but not with Gemini.
+Gemini tiers returned an empty reply or timed out; `claude-sonnet-4-6` on the
+same subscription answered reliably and can read images, though not video. So
+`ai/providers.py` runs the Antigravity tool once per request, in its read-only
+planning mode, in an empty folder holding only the task and its images, and
+tries the models in `CLIPFORGE_AGY_MODELS` in order. The API-key provider is
+written to the same interface but untested. Because video cannot be sent, the
+"multimodal check" in section 3 is done on a sheet of six frames per moment
+instead of the proxy clip.
+
+As built in Phase 4, `moments.py` holds the detector: the task text sent to
+the model, validation of its answer (line numbers outside the transcript are
+dropped, never guessed), the rough length fit, duplicate removal, and the
+selection rule. The viral score is `sum(weight × sub-score) × 10`, computed in
+code, so changing weights or project settings re-ranks stored moments with no
+AI call.
+
 As built in Phase 3, the whole-video work is local and needs no AI service:
 `analysis/audio_signals.py` (loudness, silences, sudden loud moments, all
 judged relative to the recording's own level), `analysis/video_signals.py`

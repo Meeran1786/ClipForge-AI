@@ -15,7 +15,9 @@ from .. import __version__
 from ..context import AppContext, get_ctx
 from ..jobs.engine import job_to_dict
 from ..media import VIDEO_EXTENSIONS, tool_version
-from ..models import Clip, Job, Project, Setting
+from ..models import Clip, Job, Moment, Project, Setting
+from ..moments import DEFAULT_WEIGHTS, SUBSCORE_MEANING, SUBSCORES, clean_weights, viral_score
+from ..pipelines import WEIGHTS_KEY, load_weights, reselect
 from ..schemas import CATEGORIES, ProjectOptions, project_to_dict
 
 router = APIRouter(prefix="/api", tags=["system"])
@@ -47,6 +49,8 @@ def system_info(ctx: AppContext = Depends(get_ctx)) -> dict:
         "disk_free_gb": round(usage.free / 1024**3, 1),
         "disk_total_gb": round(usage.total / 1024**3, 1),
         "gemini_route": s.gemini_route,
+        "ai_models": s.agy_models if s.gemini_route != "api" else s.gemini_model,
+        "speech_model": s.whisper_model,
         "categories": CATEGORIES,
         "video_extensions": sorted(VIDEO_EXTENSIONS),
     }
@@ -96,6 +100,42 @@ def put_defaults(body: ProjectOptions, ctx: AppContext = Depends(get_ctx)) -> di
             row.value = body.model_dump()
         s.commit()
     return body.model_dump()
+
+
+@router.get("/settings/weights")
+def get_weights(ctx: AppContext = Depends(get_ctx)) -> dict:
+    with ctx.session() as s:
+        return {"weights": load_weights(s), "defaults": DEFAULT_WEIGHTS, "meaning": SUBSCORE_MEANING}
+
+
+@router.put("/settings/weights")
+def put_weights(body: dict[str, float], ctx: AppContext = Depends(get_ctx)) -> dict:
+    """Change how the seven sub-scores add up. Every stored moment is re-scored at once, without the AI."""
+    unknown = [k for k in body if k not in SUBSCORES]
+    if unknown:
+        raise HTTPException(422, f"Unknown score parts: {', '.join(unknown)}")
+    if any(not isinstance(v, (int, float)) or v < 0 for v in body.values()) or sum(body.values()) <= 0:
+        raise HTTPException(422, "Weights must be zero or more, and not all zero")
+    # The body is the whole set: a part that is left out counts for nothing.
+    weights = clean_weights({k: body.get(k, 0) for k in SUBSCORES})
+    changed: list[int] = []
+    with ctx.session() as s:
+        row = s.get(Setting, WEIGHTS_KEY)
+        if row is None:
+            s.add(Setting(key=WEIGHTS_KEY, value=weights))
+        else:
+            row.value = weights
+        for moment in s.scalars(select(Moment)).all():
+            moment.score = viral_score(moment.subscores or {}, weights)
+        s.flush()
+        for project in s.scalars(select(Project)).all():
+            if (project.analysis or {}).get("moments"):
+                reselect(s, project)
+                changed.append(project.id)
+        s.commit()
+    for project_id in changed:
+        ctx.bus.publish({"type": "project", "id": project_id})
+    return {"weights": weights, "defaults": DEFAULT_WEIGHTS, "meaning": SUBSCORE_MEANING}
 
 
 _PICKER = r"""

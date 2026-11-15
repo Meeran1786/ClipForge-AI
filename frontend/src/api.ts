@@ -60,6 +60,37 @@ export interface AnalysisSummary {
     model: string | null
     done: boolean
   } | null
+  moments: {
+    found: number
+    selected: number
+    provider?: string
+    visually_checked?: number
+    visual_failed?: number
+    note?: string
+  } | null
+}
+
+export interface Moment {
+  id: number
+  rank: number
+  start: number
+  end: number
+  peak: number
+  category: string
+  score: number
+  subscores: Record<string, number>
+  reason: string
+  excerpt: string
+  visual: string | null
+  visual_checked: boolean
+  source: 'ai_text' | 'signals'
+  selected: boolean
+}
+
+export interface Weights {
+  weights: Record<string, number>
+  defaults: Record<string, number>
+  meaning: Record<string, string>
 }
 
 export interface Signals {
@@ -147,6 +178,8 @@ export interface SystemInfo {
   disk_free_gb: number
   disk_total_gb: number
   gemini_route: string
+  ai_models: string
+  speech_model: string
   categories: string[]
   video_extensions: string[]
 }
@@ -212,6 +245,13 @@ export const api = {
   signals: (id: number) => request<Signals>(`/api/projects/${id}/signals`),
   transcript: (id: number) => request<Transcript>(`/api/projects/${id}/transcript`),
   analyze: (id: number) => post<Project>(`/api/projects/${id}/analyze`),
+  moments: (id: number) => request<Moment[]>(`/api/projects/${id}/moments`),
+  detect: (id: number) => post<Project>(`/api/projects/${id}/detect`),
+  updateOptions: (id: number, o: ProjectOptions) =>
+    request<Project>(`/api/projects/${id}/options`, { method: 'PATCH', body: JSON.stringify(o) }),
+  weights: () => request<Weights>('/api/settings/weights'),
+  saveWeights: (w: Record<string, number>) =>
+    request<Weights>('/api/settings/weights', { method: 'PUT', body: JSON.stringify(w) }),
   jobs: (projectId?: number) =>
     request<Job[]>(projectId === undefined ? '/api/jobs' : `/api/jobs?project_id=${projectId}`),
   selfTest: (stageSeconds: number) => post<Job>('/api/jobs/selftest', { stage_seconds: stageSeconds }),

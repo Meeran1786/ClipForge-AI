@@ -20,7 +20,16 @@ class Settings(BaseSettings):
     data_dir: Path = REPO_ROOT / "data"
     host: str = "127.0.0.1"
     port: int = 8765
+    # AI for moment detection. "agy" = the signed-in Antigravity command-line
+    # tool (uses the owner's subscription); "api" = a Gemini API key.
     gemini_route: str = "agy"
+    agy_path: str = r"D:\Helios\tools\agy\bin\agy.exe"
+    # Tried in order; the first that answers is kept for the rest of the run.
+    # Tested 2026-11-15: claude-sonnet-4-6 answered reliably through this
+    # sign-in; the Gemini tiers returned empty replies or timed out.
+    agy_models: str = "claude-sonnet-4-6,gemini-3.8-flash-medium"
+    ai_timeout_seconds: int = 300
+    gemini_model: str = ""  # required when gemini_route is "api"
     ffmpeg_dir: Path = REPO_ROOT / "tools" / "ffmpeg"
     frontend_dist: Path = REPO_ROOT / "frontend" / "dist"
 

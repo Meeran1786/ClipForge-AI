@@ -5,8 +5,11 @@ best moments, cuts them with context, reframes to 9:16, adds word-synced
 captions and optional licensed music, and writes titles and hashtags. Nothing
 is published without approval.
 
-**Status:** Phases 1 to 3 of 10 are built — the app foundation, dashboard,
-video ingestion and whole-video analysis. It does not pick or cut clips yet. See the [roadmap](docs/ROADMAP.md) for what each
+**Status:** Phases 1 to 4 of 10 are built — the app foundation, dashboard,
+video ingestion, whole-video analysis and AI moment picking. It finds and
+scores the moments worth clipping, but does not cut, caption or render clips
+yet. Moment quality has been checked on two test videos only; it has not yet
+been judged on real stream footage. See the [roadmap](docs/ROADMAP.md) for what each
 phase adds and the [architecture](docs/ARCHITECTURE.md) for how it fits
 together.
 
@@ -45,6 +48,15 @@ Options: `--port 9000`, `--no-browser`, `--data-dir <folder>`.
   (about 500 MB) downloads on first use. A three-hour stream takes roughly
   20–40 minutes to transcribe, and an interrupted run continues from the last
   finished ten-minute chunk.
+- After analysis the AI picks the moments worth clipping. Each gets a
+  category, seven marks out of ten, a viral score from 0 to 100, a reason in
+  plain words, and a note on what frames from the video showed. The project
+  page lists them with filters and a play button, and marks them on the
+  timeline. Changing a project's clip settings or the score weights
+  (Settings) re-ranks them at once without asking the AI again.
+- Picking needs an AI provider: the Antigravity command-line tool, signed in,
+  or a Gemini API key in `.env`. Without one the video, timeline and
+  transcript are still produced and the project says why moments are missing.
 - Live, stage-by-stage progress for background jobs, with cancel and retry.
   A job interrupted by closing or killing the app continues from the first
   unfinished stage when the app starts again.

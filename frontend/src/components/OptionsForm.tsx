@@ -127,7 +127,7 @@ export function OptionsForm({
           onChange={(e) => set('min_score', e.target.valueAsNumber)}
           className="w-full accent-accent"
         />
-        <p className="hint">Moments scoring below this are left out. Scoring itself arrives in Phase 4.</p>
+        <p className="hint">Moments scoring below this are found and listed, but not selected for clips.</p>
       </div>
     </div>
   )

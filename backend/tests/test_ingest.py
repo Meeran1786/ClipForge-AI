@@ -113,7 +113,7 @@ def test_permitted_link_is_downloaded_and_prepared(client, settings, fake_source
     assert ready["source_meta"]["upload_date"] == "2026-01-02"
     assert ready["has_proxy"] and ready["has_audio_file"] and ready["has_thumbnail"]
     stages = stages_of(client, project["id"])
-    assert [s["status"] for s in stages.values()] == ["done"] * 9
+    assert [s["status"] for s in stages.values()] == ["done"] * 10
     # each finished stage keeps its closing summary, not a mid-run message
     assert stages["proxy"]["message"].startswith("Preview copy:")
     assert stages["audio"]["message"].startswith("Audio:")

@@ -1,7 +1,8 @@
 import { useQuery } from '@tanstack/react-query'
 import { type MouseEvent, useEffect, useMemo, useRef, useState } from 'react'
-import { api, type Project, type Signals, type TranscriptLine } from '../api'
+import { api, type Moment, type Project, type Signals, type TranscriptLine } from '../api'
 import { duration as clock } from '../format'
+import { MomentsPanel } from './MomentsPanel'
 import { Empty, Section, Spinner } from '../ui'
 
 const VIEW_W = 1000
@@ -29,10 +30,12 @@ function areaPath(values: number[], hop: number, total: number, top: number, hei
 
 function Timeline({
   signals,
+  moments,
   time,
   onSeek,
 }: {
   signals: Signals
+  moments: Moment[]
   time: number
   onSeek: (t: number) => void
 }) {
@@ -83,13 +86,24 @@ function Timeline({
           {signals.cuts.map((t, i) => (
             <line key={i} x1={px(t)} x2={px(t)} y1={90} y2={116} className="stroke-ink/25" strokeWidth={1} vectorEffect="non-scaling-stroke" />
           ))}
+          {moments.map((mo) => (
+            <rect
+              key={mo.id}
+              x={px(mo.start)}
+              y={0}
+              width={Math.max(px(mo.end) - px(mo.start), 2)}
+              height={5}
+              rx={1}
+              className={mo.selected ? 'fill-good' : 'fill-good/35'}
+            />
+          ))}
           {signals.events.map((ev, i) => (
             <rect
               key={i}
               x={px(ev.t) - 1.5}
-              y={4}
+              y={7}
               width={3}
-              height={14}
+              height={12}
               rx={1}
               className={ev.kind === 'surge_after_silence' ? 'fill-bad' : 'fill-accent'}
             />
@@ -114,6 +128,11 @@ function Timeline({
         <span>{clock(total)}</span>
       </div>
       <div className="mt-3 flex flex-wrap gap-x-5 gap-y-1.5 text-xs text-soft">
+        {moments.length > 0 && (
+          <span className="flex items-center gap-1.5">
+            <span className="h-1.5 w-4 rounded-sm bg-good" /> Picked moment ({moments.length})
+          </span>
+        )}
         <span className="flex items-center gap-1.5">
           <span className="size-2.5 rounded-sm bg-accent/70" /> Loudness
         </span>
@@ -231,11 +250,23 @@ export function AnalysisWorkspace({ project, busy }: { project: Project; busy: b
     enabled: Boolean(a.transcript),
   })
 
+  const moments = useQuery({
+    queryKey: ['moments', project.id, project.updated_at],
+    queryFn: () => api.moments(project.id),
+    enabled: Boolean(a.moments),
+  })
+  const momentList = moments.data ?? []
+
   const seek = (t: number) => {
     const v = videoRef.current
     if (!v) return
     v.currentTime = t
     setTime(t)
+  }
+  const play = (t: number) => {
+    seek(t)
+    videoRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+    void videoRef.current?.play().catch(() => undefined)
   }
 
   const t = a.transcript
@@ -246,6 +277,7 @@ export function AnalysisWorkspace({ project, busy }: { project: Project; busy: b
       : `Transcribing… ${t.lines} lines so far`
 
   return (
+    <>
     <div className="mb-6 grid gap-6 lg:grid-cols-5">
       <div className="lg:col-span-3">
         <Section title="Video and signals">
@@ -270,7 +302,7 @@ export function AnalysisWorkspace({ project, busy }: { project: Project; busy: b
           ) : signals.isError ? (
             <p className="text-sm text-bad">{signals.error.message}</p>
           ) : (
-            <Timeline signals={signals.data} time={time} onSeek={seek} />
+            <Timeline signals={signals.data} moments={momentList} time={time} onSeek={seek} />
           )}
         </Section>
       </div>
@@ -291,5 +323,9 @@ export function AnalysisWorkspace({ project, busy }: { project: Project; busy: b
         </Section>
       </div>
     </div>
+    <div className="mb-6">
+      <MomentsPanel project={project} moments={momentList} busy={busy} onPlay={play} />
+    </div>
+    </>
   )
 }

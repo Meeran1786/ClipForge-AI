@@ -13,10 +13,10 @@ from sqlalchemy import func, select
 from ..context import AppContext, get_ctx
 from ..ingest import detect_platform
 from ..media import VIDEO_EXTENSIONS
-from ..models import Clip, Job, Project, TranscriptSegment
-from ..pipelines import default_link_title, reset_analysis
+from ..models import Clip, Job, Moment, Project, TranscriptSegment
+from ..pipelines import default_link_title, reselect, reset_analysis
 from ..rights import download_blocker, write_rights_file
-from ..schemas import AttachFile, ProjectCreate, RightsUpdate, project_to_dict
+from ..schemas import AttachFile, ProjectCreate, ProjectOptions, RightsUpdate, project_to_dict
 
 router = APIRouter(prefix="/api/projects", tags=["projects"])
 
@@ -283,6 +283,70 @@ def analyze(project_id: int, ctx: AppContext = Depends(get_ctx)) -> dict:
         s.commit()
         data = project_to_dict(project)
     ctx.worker.enqueue("analyze", project_id=project_id)
+    ctx.bus.publish({"type": "project", "id": project_id})
+    return data
+
+
+def moment_to_dict(m: Moment) -> dict:
+    return {
+        "id": m.id,
+        "rank": m.rank,
+        "start": m.start,
+        "end": m.end,
+        "peak": m.peak,
+        "category": m.category,
+        "score": m.score,
+        "subscores": m.subscores or {},
+        "reason": m.reason,
+        "excerpt": m.excerpt,
+        "visual": m.visual,
+        "visual_checked": m.visual_checked,
+        "source": m.source,
+        "selected": m.selected,
+    }
+
+
+@router.get("/{project_id}/moments")
+def get_moments(project_id: int, ctx: AppContext = Depends(get_ctx)) -> list[dict]:
+    with ctx.session() as s:
+        if s.get(Project, project_id) is None:
+            raise HTTPException(404, "Project not found")
+        rows = s.scalars(
+            select(Moment).where(Moment.project_id == project_id).order_by(Moment.rank, Moment.id)
+        ).all()
+        return [moment_to_dict(m) for m in rows]
+
+
+@router.post("/{project_id}/detect")
+def detect(project_id: int, ctx: AppContext = Depends(get_ctx)) -> dict:
+    """Pick the moments again (asks the AI again), keeping the existing analysis."""
+    with ctx.session() as s:
+        project = s.get(Project, project_id)
+        if project is None:
+            raise HTTPException(404, "Project not found")
+        if _busy(s, project_id):
+            raise HTTPException(409, "This project is still processing. Cancel its job first.")
+        if not (project.analysis or {}).get("transcript", {}).get("done"):
+            raise HTTPException(409, "This video has not been analysed yet, so there is nothing to pick from.")
+        project.status, project.status_detail = "processing", None
+        s.commit()
+        data = project_to_dict(project)
+    ctx.worker.enqueue("detect", project_id=project_id)
+    ctx.bus.publish({"type": "project", "id": project_id})
+    return data
+
+
+@router.patch("/{project_id}/options")
+def update_options(project_id: int, body: ProjectOptions, ctx: AppContext = Depends(get_ctx)) -> dict:
+    """Change what the project asks for. Existing moments are re-ranked at once, without the AI."""
+    with ctx.session() as s:
+        project = s.get(Project, project_id)
+        if project is None:
+            raise HTTPException(404, "Project not found")
+        project.options = body.model_dump()
+        reselect(s, project)
+        s.commit()
+        data = project_to_dict(project)
     ctx.bus.publish({"type": "project", "id": project_id})
     return data
 

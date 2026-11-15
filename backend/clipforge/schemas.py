@@ -74,6 +74,7 @@ def project_to_dict(p: Project, *, clip_count: int = 0) -> dict[str, Any]:
             "audio": analysis.get("audio"),
             "video": analysis.get("video"),
             "transcript": transcript or None,
+            "moments": analysis.get("moments"),
         },
         "source_meta": p.source_meta,
         "has_proxy": bool(p.proxy_path),

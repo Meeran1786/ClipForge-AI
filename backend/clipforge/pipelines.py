@@ -17,9 +17,10 @@ import shutil
 import tempfile
 from pathlib import Path
 
-from sqlalchemy import delete
+from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
+from .ai import make_reasoner
 from .analysis.audio_signals import analyse_audio
 from .analysis.transcript import (
     make_transcriber,
@@ -41,7 +42,9 @@ from .media import (
     run,
     tool_version,
 )
-from .models import Job, Project, TranscriptSegment
+from .models import Job, Moment, Project, Setting, TranscriptSegment
+from .moments import Line, clean_weights, detect_moments
+from .moments import select as pick_selected
 from .rights import download_blocker, write_rights_file
 
 
@@ -306,9 +309,85 @@ def _transcript(ctx: StageContext) -> dict:
     return {"lines": lines, "language": language}
 
 
+WEIGHTS_KEY = "score_weights"
+
+
+def load_weights(s: Session) -> dict[str, float]:
+    row = s.get(Setting, WEIGHTS_KEY)
+    return clean_weights(row.value if row else None)
+
+
+def _moments(ctx: StageContext) -> dict:
+    """Pick and score the moments worth clipping. Needs an AI provider."""
+    with ctx.session() as s:
+        project = s.get(Project, ctx.project_id)
+        options = dict(project.options or {})
+        proxy = Path(project.proxy_path) if project.proxy_path else None
+        duration = float((project.media or {}).get("duration") or 0)
+        weights = load_weights(s)
+        rows = s.scalars(
+            select(TranscriptSegment)
+            .where(TranscriptSegment.project_id == ctx.project_id)
+            .order_by(TranscriptSegment.start, TranscriptSegment.id)
+        ).all()
+        lines = [Line(i, r.start, r.end, r.text) for i, r in enumerate(rows, start=1)]
+    signals_file = ctx.settings.project_dir(ctx.project_id) / "audio_signals.json"
+    events = json.loads(signals_file.read_text(encoding="utf-8")).get("events", []) if signals_file.is_file() else []
+
+    if not lines and not events:
+        with ctx.session() as s:
+            s.execute(delete(Moment).where(Moment.project_id == ctx.project_id))
+            s.commit()
+        _note_analysis(ctx, "moments", {"found": 0, "selected": 0, "note": "no speech and no loud moments"})
+        ctx.report(1.0, "No speech and no loud moments in this video, so there is nothing to pick from")
+        return {"found": 0}
+
+    ctx.report(0.0, "Connecting to the AI")
+    reasoner = make_reasoner(ctx.settings)
+    ranked, notes = detect_moments(
+        reasoner, ctx.settings,
+        lines=lines, events=events, duration=duration, proxy=proxy, options=options, weights=weights,
+        work_dir=ctx.settings.project_dir(ctx.project_id) / "sheets",
+        report=ctx.report, check=ctx.check,
+    )
+    shutil.rmtree(ctx.settings.project_dir(ctx.project_id) / "sheets", ignore_errors=True)
+
+    with ctx.session() as s:
+        project = s.get(Project, ctx.project_id)
+        s.execute(delete(Moment).where(Moment.project_id == ctx.project_id))
+        s.add_all(
+            Moment(
+                project_id=ctx.project_id, start=c.start, end=c.end, peak=c.peak, category=c.category,
+                score=c.score, subscores=c.subscores, reason=c.reason, excerpt=c.excerpt, visual=c.visual,
+                visual_checked=c.visual_checked, source=c.source, rank=c.rank, selected=c.selected,
+            )
+            for c in ranked
+        )
+        project.analysis = {**(project.analysis or {}), "moments": notes}
+        s.commit()
+    ctx.publish_project()
+
+    message = f"{notes['found']} moments found, {notes['selected']} selected"
+    if notes["visual_failed"]:
+        message += f" ({notes['visual_failed']} picture check(s) failed; those scores come from the words alone)"
+    ctx.report(1.0, message)
+    return notes
+
+
+def reselect(s: Session, project: Project) -> None:
+    """Re-rank and re-mark a project's moments after its settings or the weights change. No AI call."""
+    rows = list(s.scalars(select(Moment).where(Moment.project_id == project.id)).all())
+    pick_selected(rows, project.options or {})
+    summary = dict((project.analysis or {}).get("moments") or {})
+    if summary:
+        summary.update(found=len(rows), selected=sum(r.selected for r in rows))
+        project.analysis = {**(project.analysis or {}), "moments": summary}
+
+
 def reset_analysis(s: Session, settings, project: Project) -> None:
     """Forget a previous analysis so it can be run again from scratch."""
     s.execute(delete(TranscriptSegment).where(TranscriptSegment.project_id == project.id))
+    s.execute(delete(Moment).where(Moment.project_id == project.id))
     project.analysis = None
     for name in ("audio_signals.json", "video_signals.json"):
         (settings.project_dir(project.id) / name).unlink(missing_ok=True)
@@ -322,8 +401,17 @@ def _ingest_finished(s: Session, job: Job) -> None:
         project.status = "ready"
         project.status_detail = None
     elif job.status == "failed":
-        project.status = "failed"
-        project.status_detail = job.error
+        failed_stage = next((st.name for st in job.stages if st.status == "failed"), None)
+        if failed_stage == "moments":
+            # The video is prepared and analysed; only the AI pick is missing.
+            project.status = "ready"
+            project.status_detail = (
+                f"Moments were not picked: {job.error}. The video, timeline and transcript are ready. "
+                "Use Retry to try again."
+            )
+        else:
+            project.status = "failed"
+            project.status_detail = job.error
     elif job.status == "cancelled":
         project.status = "failed"
         project.status_detail = "Cancelled. Use Resume to continue from where it stopped."
@@ -347,6 +435,10 @@ _ANALYSE = [
     StageDef("audio_signals", "Analyse sound", _audio_signals),
     StageDef("video_signals", "Analyse picture", _video_signals),
     StageDef("transcript", "Transcribe speech", _transcript),
+]
+
+_DETECT = [
+    StageDef("moments", "Find the best moments", _moments),
 ]
 
 
@@ -432,15 +524,19 @@ def _wait_stage(label: str):
 
 PIPELINES: dict[str, Pipeline] = {
     "ingest_local": Pipeline(
-        stages=[*_PREPARE, *_ANALYSE], on_finish=_ingest_finished, on_retry=_ingest_retried
+        stages=[*_PREPARE, *_ANALYSE, *_DETECT], on_finish=_ingest_finished, on_retry=_ingest_retried
     ),
-    "analyze": Pipeline(stages=list(_ANALYSE), on_finish=_ingest_finished, on_retry=_ingest_retried),
+    "analyze": Pipeline(
+        stages=[*_ANALYSE, *_DETECT], on_finish=_ingest_finished, on_retry=_ingest_retried
+    ),
+    "detect": Pipeline(stages=list(_DETECT), on_finish=_ingest_finished, on_retry=_ingest_retried),
     "ingest_url": Pipeline(
         stages=[
             StageDef("metadata", "Look up the video", _metadata, max_attempts=3),
             StageDef("download", "Download the video", _download, max_attempts=3),
             *_PREPARE,
             *_ANALYSE,
+            *_DETECT,
         ],
         on_finish=_ingest_finished,
         on_retry=_ingest_retried,

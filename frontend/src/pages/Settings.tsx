@@ -58,6 +58,101 @@ function Defaults({ categories }: { categories: string[] }) {
   )
 }
 
+const WEIGHT_LABEL: Record<string, string> = {
+  entertainment: 'Entertainment',
+  emotion: 'Emotion',
+  surprise: 'Surprise',
+  retention: 'Retention',
+  context: 'Setup and payoff',
+  replay: 'Replay',
+  standalone: 'Stands alone',
+}
+
+function ScoreWeights() {
+  const qc = useQueryClient()
+  const current = useQuery({ queryKey: ['weights'], queryFn: api.weights })
+  const [draft, setDraft] = useState<Record<string, number> | null>(null)
+
+  useEffect(() => {
+    if (current.data && draft === null)
+      setDraft(Object.fromEntries(Object.entries(current.data.weights).map(([k, v]) => [k, Math.round(v * 100)])))
+  }, [current.data, draft])
+
+  const save = useMutation({
+    mutationFn: (w: Record<string, number>) => api.saveWeights(w),
+    onSuccess: (saved) => {
+      qc.setQueryData(['weights'], saved)
+      setDraft(Object.fromEntries(Object.entries(saved.weights).map(([k, v]) => [k, Math.round(v * 100)])))
+      void qc.invalidateQueries({ queryKey: ['project'] })
+      void qc.invalidateQueries({ queryKey: ['moments'] })
+    },
+  })
+
+  if (current.isError) return <ErrorNote>{current.error.message}</ErrorNote>
+  if (!draft || !current.data) return <Spinner />
+  const total = Object.values(draft).reduce((a, b) => a + (Number.isFinite(b) ? b : 0), 0)
+  const valid = Object.values(draft).every((v) => Number.isFinite(v) && v >= 0) && total > 0
+
+  return (
+    <>
+      <p className="mb-4 text-sm text-soft">
+        The AI gives each moment seven marks out of ten. The viral score is their weighted sum, worked out here, so
+        changing a weight re-scores every moment at once without asking the AI again.
+      </p>
+      <div className="space-y-2.5">
+        {Object.keys(WEIGHT_LABEL).map((key) => (
+          <div key={key} className="flex items-center gap-3">
+            <label htmlFor={`w-${key}`} className="w-36 shrink-0 text-sm">
+              {WEIGHT_LABEL[key]}
+            </label>
+            <input
+              id={`w-${key}`}
+              type="number"
+              min={0}
+              max={100}
+              className="input h-9 w-20 tabular-nums"
+              value={Number.isNaN(draft[key]) ? '' : draft[key]}
+              onChange={(e) => {
+                save.reset()
+                setDraft({ ...draft, [key]: e.target.valueAsNumber })
+              }}
+            />
+            <span className="min-w-0 text-xs text-faint">{current.data.meaning[key]}</span>
+          </div>
+        ))}
+      </div>
+      <div className="mt-5 flex flex-wrap items-center gap-3">
+        <button className="btn btn-primary" disabled={!valid || save.isPending} onClick={() => save.mutate(draft)}>
+          {save.isPending ? 'Saving…' : 'Save weights'}
+        </button>
+        <button
+          className="btn"
+          disabled={save.isPending}
+          onClick={() => {
+            save.reset()
+            setDraft(
+              Object.fromEntries(Object.entries(current.data.defaults).map(([k, v]) => [k, Math.round(v * 100)])),
+            )
+          }}
+        >
+          Reset to defaults
+        </button>
+        <span className="text-sm text-soft">
+          {!valid
+            ? 'Weights must be zero or more, and not all zero.'
+            : save.isError
+              ? save.error.message
+              : save.isSuccess
+                ? 'Saved'
+                : total === 100
+                  ? 'Total 100'
+                  : `Total ${total}: scaled to 100 when saved`}
+        </span>
+      </div>
+    </>
+  )
+}
+
 function SelfTest() {
   const jobs = useQuery({ queryKey: ['jobs'], queryFn: () => api.jobs() })
   const start = useMutation({ mutationFn: () => api.selfTest(6) })
@@ -114,9 +209,12 @@ export default function Settings() {
                   {s.disk_free_gb} GB of {s.disk_total_gb} GB
                 </span>
               </Row>
-              <Row label="AI provider">
-                Gemini via {s.gemini_route === 'agy' ? 'Antigravity sign-in' : 'API key'}{' '}
-                <span className="text-faint">· first used in Phase 3</span>
+              <Row label="AI for picking moments">
+                {s.gemini_route === 'api' ? 'Gemini API key' : 'Antigravity sign-in'}
+                {s.ai_models && <span className="text-faint"> · {s.ai_models}</span>}
+              </Row>
+              <Row label="Speech-to-text">
+                On this computer <span className="text-faint">· {s.speech_model} model</span>
               </Row>
             </dl>
             {lowDisk && (
@@ -128,7 +226,7 @@ export default function Settings() {
 
           <Section title="Not built yet">
             <ul className="space-y-2 text-sm text-soft">
-              <li>AI provider and model choice — Phase 3</li>
+              <li>Choosing the AI provider and models here (set in the .env file for now)</li>
               <li>Caption presets — Phase 6</li>
               <li>Music library and licences — Phase 7</li>
               <li>Export settings — Phase 9</li>
@@ -140,6 +238,9 @@ export default function Settings() {
           <Section title="Default clip settings">
             <p className="mb-5 text-sm text-soft">New projects start with these. Each project can change them.</p>
             <Defaults categories={s.categories} />
+          </Section>
+          <Section title="Viral score weights">
+            <ScoreWeights />
           </Section>
           <SelfTest />
         </div>

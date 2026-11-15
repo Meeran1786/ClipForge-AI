@@ -138,7 +138,63 @@ minutes. A film with long music-only stretches is slower per minute.
 Gate: on a real 30–60 minute video, transcript timing is within about a second
 of speech when spot-checked at ten points; signals line up with visible events.
 
-## Phase 4 — Moment detection and viral score
+## Phase 4 — Moment detection and viral score — built 2026-11-15, owner's gate still open
+
+What was built: an AI provider layer; a three-step detector (the AI reads the
+whole transcript with pauses and loud moments marked in; sudden loud moments
+with no dialogue are added as extra candidates; the best candidates are
+checked against six frames from the video); a viral score computed in code
+from seven sub-scores and adjustable weights; per-project selection by
+category, minimum score and clip count; a moments panel with filters, play
+buttons and timeline markers; editable clip settings and score weights that
+re-rank at once without asking the AI again.
+
+Results of the runs done here:
+
+- **Planted-highlight test.** A three-minute spoken video of mostly dull talk
+  with two clear highlights. The AI picked exactly those two (scores 86 and
+  79), with the setup and the punchline inside each range, and none of the
+  dull lines.
+- **Real film.** Tears of Steel (CC BY 3.0, Blender Foundation): 7 moments
+  found, 5 selected, scores 56–74. Each reason quotes real lines and each
+  frame description names things visible in those frames. Two moments came
+  from sudden loud sounds and were kept only because the frames showed
+  something; they ranked last. Link to finished picks took about 8 minutes;
+  the AI part was about 3.5 minutes over 3 calls.
+- **Dashboard.** Moments list, timeline bars, play button, category and score
+  filters, weight changes and clip-setting changes all checked in the browser.
+- 132 automated tests pass. They use a stand-in AI; the real AI is exercised
+  only by the two runs above.
+
+Bug found by the first real run and fixed: the picture check could discard
+any moment, so a video whose picture is uninformative (a test pattern) ended
+with zero moments. Now a picture that adds nothing leaves a words-based moment
+and its scores untouched; only a moment found by sound alone needs the picture
+to vouch for it.
+
+**The gate is not passed.** It requires the owner to watch the top ten picks
+on three of their own videos and judge at least seven of ten worth clipping.
+That has not happened, and no real gaming or stream footage has been through
+the detector. Until it has, treat the pick quality as promising, not proven.
+
+Other things to know:
+
+- **Gemini is not the model doing the picking.** Through the Antigravity
+  sign-in, the Gemini tiers returned an empty reply or timed out, while
+  `claude-sonnet-4-6` on the same subscription answered every time. The
+  default order is therefore that model first, Gemini second
+  (`CLIPFORGE_AGY_MODELS` in `.env` changes it).
+- The Gemini API-key route is written but has never been run: no key was
+  available.
+- The picture check looks at six still frames per moment. It does not watch
+  the moving video or hear the sound, and it has misread fine detail in a
+  test (a 7 as a 1).
+- Each AI call carries about 28,000 tokens of fixed overhead. A long video
+  needs one call per 20 minutes of transcript plus one per four candidates.
+- Only a single 20-minute transcript stretch has been run with the real AI.
+  Videos long enough to need several stretches are covered by tests only.
+- Moment ranges are rough. Clean cuts at sentence and pause boundaries are
+  Phase 5.
 
 - Candidate proposal from transcript + signals.
 - Multimodal scoring of candidates: category, seven sub-scores, reason.
@@ -148,7 +204,26 @@ Gate: on three different videos the owner watches the top ten picks and rates
 them. Target: at least seven of ten judged worth clipping. Tune prompts and
 weights until met. **This is the checkpoint before investing in editing.**
 
+## Planned feature — Smart Duration and context-aware part splitting
+
+Requested 2026-11-15, to start only after Phase 4 is finished and tested. Full
+requirement list and test cases: [TASKS.md](TASKS.md).
+
+In short: the user picks a target length (15/20/30/35/45/60/90 s or custom)
+and a mode (Strict, Smart, Flexible). The target guides the cut but never
+breaks a sentence, punchline, reaction or event. Long moments can be split
+into connected Part 1 / Part 2 / Part 3 Shorts at natural boundaries. Every
+clip gets a pre-export validation report.
+
+It is not a separate phase. Its core (duration engine, ending detection, part
+splitting, the New Project panel) becomes the main body of Phase 5; caption
+checks land in Phase 6, part labels and consistent layout in Phase 8, the
+validation report and per-part titles in Phase 9. Dependencies: Phase 3 word
+timings, silences and scene changes; Phase 4 moments.
+
 ## Phase 5 — Clip extraction
+
+Includes the Smart Duration engine described above.
 
 - Boundary refinement to sentence and silence boundaries, 15–90 s limits.
 - Silence trimming, de-duplication.

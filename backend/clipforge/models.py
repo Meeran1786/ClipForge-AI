@@ -64,6 +64,9 @@ class Project(Base):
     transcript: Mapped[list[TranscriptSegment]] = relationship(
         back_populates="project", cascade="all, delete-orphan"
     )
+    moments: Mapped[list[Moment]] = relationship(
+        back_populates="project", cascade="all, delete-orphan"
+    )
 
 
 class Job(Base):
@@ -146,6 +149,34 @@ class TranscriptSegment(Base):
     words: Mapped[list[dict[str, Any]]] = mapped_column(JSON, default=list)
 
     project: Mapped[Project] = relationship(back_populates="transcript")
+
+
+class Moment(Base):
+    """A stretch of the video worth turning into a Short, with its scores."""
+
+    __tablename__ = "moments"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    project_id: Mapped[int] = mapped_column(
+        ForeignKey("projects.id", ondelete="CASCADE"), index=True
+    )
+    start: Mapped[float] = mapped_column(Float)
+    end: Mapped[float] = mapped_column(Float)
+    peak: Mapped[float] = mapped_column(Float)
+    category: Mapped[str] = mapped_column(String(30))
+    score: Mapped[int] = mapped_column(Integer, index=True)
+    # seven 0-10 sub-scores; the viral score is computed from these in code
+    subscores: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    reason: Mapped[str] = mapped_column(Text, default="")
+    excerpt: Mapped[str] = mapped_column(Text, default="")
+    visual: Mapped[str | None] = mapped_column(Text, default=None)  # what the frames showed
+    visual_checked: Mapped[bool] = mapped_column(default=False)
+    source: Mapped[str] = mapped_column(String(20), default="ai_text")  # ai_text | signals
+    rank: Mapped[int] = mapped_column(Integer, default=0)
+    selected: Mapped[bool] = mapped_column(default=False)
+    created_at: Mapped[datetime] = mapped_column(default=utcnow)
+
+    project: Mapped[Project] = relationship(back_populates="moments")
 
 
 class Setting(Base):
