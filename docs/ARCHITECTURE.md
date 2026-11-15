@@ -365,6 +365,38 @@ gameplay.
 - The library starts empty. Tracks are added by the user from sources they
   hold licences for.
 
+As built in Phase 7 (`music.py`), with differences from the plan above:
+
+- Ducking is an envelope worked out from the word timings, not
+  `sidechaincompress`: the speech is already known to the word, so the music is
+  lowered 10 dB under every stretch of speech (merged across gaps under 0.5 s,
+  0.1 s attack, 0.45 s release) with FFmpeg's `amultiply`. The result is exact
+  and measurable, and game sound is not mistaken for speech.
+- The music's open level is set from the speech level of the clip (default 14
+  dB under it, plus the 10 dB duck, about 24 dB under the speech while someone
+  talks). The gap is measured on the music as mixed and recorded per clip; a
+  clip below 12 dB is flagged.
+- The clip's own sound is never processed. Music is added with `amix`
+  (no normalisation) and a limiter at 0.95 only to stop clipping. Mono sounds
+  are copied to both channels unchanged, because FFmpeg's own conversion
+  lowers each channel by 3 dB.
+- Mood comes from the moment's category (`CATEGORY_MOODS`); there is no AI
+  call. Auto mode skips music for non-stop talking (90% of the clip) with
+  nothing else happening; Always and a per-clip choice override that.
+- Beats come from librosa at an 11.6 ms frame, corrected for the tracker's
+  25 ms lag (snapped to a clearly sharp attack, otherwise shifted by the lag),
+  and only believed where onsets are stronger on the beats than between them.
+  The music starts at the earliest bar line that puts a beat on the clip's key
+  moment. Parts of one moment share a track and the music continues from where
+  the previous part's ended.
+- Tracks are copied into `data\music` and analysed on import. Selection is
+  refused in the API, in the planner and again at render time if licence
+  details are incomplete.
+- Music is mixed into the same render as the captions (`captions` stage,
+  labelled "Add captions and music"). A `music` stage before it chooses and
+  plans; `remix` re-runs both after a music setting changes; `caption` with
+  `clip_ids` re-renders chosen clips only.
+
 ## 10. Quality control
 
 Run on every rendered clip before it appears as ready:

@@ -1,6 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { type ReactNode, useEffect, useState } from 'react'
 import { api, type ProjectOptions } from '../api'
+import { MusicLibrary } from '../components/MusicLibrary'
 import { OptionsForm, optionsError } from '../components/OptionsForm'
 import { Badge, Empty, ErrorNote, JobPanel, PageHeader, Section, Spinner } from '../ui'
 
@@ -236,7 +237,6 @@ export default function Settings() {
           <Section title="Not built yet">
             <ul className="space-y-2 text-sm text-soft">
               <li>Choosing the AI provider and models here (set in the .env file for now)</li>
-              <li>Music library and licences — Phase 7</li>
               <li>Export settings — Phase 9</li>
             </ul>
           </Section>
@@ -252,6 +252,9 @@ export default function Settings() {
           </Section>
           <SelfTest />
         </div>
+      </div>
+      <div className="mt-6">
+        <MusicLibrary />
       </div>
     </>
   )

@@ -33,20 +33,38 @@ from .analysis.transcript import (
 from .analysis.video_signals import analyse_video
 from .ingest import PLATFORM_LABELS, IngestRefused, source_for
 from .jobs.engine import Pipeline, StageContext, StageDef
-from .captions import build_captions
+from .captions import build_captions, clip_words
 from .duration import ClipPlan, Context, DurationSettings, Word, plan_moment
 from .media import (
     MediaError,
+    MixSpec,
     extract_audio,
     make_proxy,
     make_thumbnail,
     probe_media,
+    render_music_stem,
     render_ranges,
     render_vertical,
     run,
     tool_version,
 )
-from .models import Clip, Job, Moment, Project, Setting, TranscriptSegment
+from .models import Clip, Job, Moment, Project, Setting, Track, TranscriptSegment
+from .music import (
+    MIN_GAP_DB,
+    TrackInfo,
+    choose_track,
+    clip_windows,
+    is_plain_conversation,
+    level_in_windows,
+    licence_problems,
+    merge_ranges,
+    plan_mix,
+    preferred_moods,
+    requires_attribution,
+    silence_gaps,
+    to_clip_time,
+    write_envelope,
+)
 from .schemas import ProjectOptions, normalise_options
 from .moments import Line, clean_weights, detect_moments
 from .moments import select as pick_selected
@@ -516,8 +534,168 @@ def _clips(ctx: StageContext) -> dict:
     return summary
 
 
+def track_info(t: Track) -> TrackInfo:
+    """A library track as the music engine sees it, with whatever still stops it being usable."""
+    problems = licence_problems(t.source, t.licence_name, t.licence_url, t.licence_note, t.attribution)
+    if not t.file or not Path(t.file).is_file():
+        problems = [*problems, "The track's file is missing from the music folder."]
+    return TrackInfo(
+        id=t.id, title=t.title, file=t.file, duration=float(t.duration or 0),
+        loudness_db=float(t.loudness_db if t.loudness_db is not None else -20.0), moods=list(t.moods or []),
+        usable=not problems, problems=problems, bpm=t.bpm, beats=list(t.beats or []),
+        phase=int(t.phase or 0), regularity=float(t.regularity or 0.0),
+        licence_name=t.licence_name, source=t.source, attribution=t.attribution, channels=int(t.channels or 2),
+    )
+
+
+def load_track_infos(s: Session) -> list[TrackInfo]:
+    return [track_info(t) for t in s.scalars(select(Track).order_by(Track.id)).all()]
+
+
+def plan_project_music(
+    s: Session, settings, project_id: int, only_keys: set | None = None, forced: dict | None = None
+) -> dict[int, dict]:
+    """Decide the music for each moment's clips: {clip id: record}. Parts of one moment share one track.
+
+    `forced` maps a moment key to the owner's choice ({"mode": "none"} or {"mode": "track", "track_id": n}).
+    """
+    project = s.get(Project, project_id)
+    options = ProjectOptions(**normalise_options(project.options))
+    clips = list(s.scalars(select(Clip).where(Clip.project_id == project_id).order_by(Clip.rank, Clip.part, Clip.id)).all())
+    tracks = {t.id: t for t in load_track_infos(s)}
+    moments = {m.id: m for m in s.scalars(select(Moment).where(Moment.project_id == project_id)).all()}
+    rows = s.scalars(
+        select(TranscriptSegment).where(TranscriptSegment.project_id == project_id)
+        .order_by(TranscriptSegment.start, TranscriptSegment.id)
+    ).all()
+    words = [w for r in rows for w in (r.words or []) if w.get("w")]
+    signals = settings.project_dir(project_id) / "audio_signals.json"
+    events = [float(e["t"]) for e in json.loads(signals.read_text(encoding="utf-8")).get("events", [])] if signals.is_file() else []
+    audio = Path(project.audio_path) if project.audio_path and Path(project.audio_path).is_file() else None
+
+    groups: dict[int, list[Clip]] = {}
+    for c in clips:
+        groups.setdefault(c.moment_id if c.moment_id is not None else -c.id, []).append(c)
+    out: dict[int, dict] = {}
+    uses: dict[int, int] = {}
+    for key, group in groups.items():
+        if only_keys is not None and key not in only_keys:
+            continue
+        group.sort(key=lambda c: (c.part or 1, c.id))
+        choice = (forced or {}).get(key)
+        category = group[0].category
+        windows: list[tuple[float, float]] = []
+        for c in group:
+            windows += clip_windows(words, c.segments or [])
+        total_len = sum(float(c.duration or 0) for c in group)
+        speech_time = sum(b - a for a, b in merge_ranges(windows, 0.0))
+        coverage = speech_time / total_len if total_len else 0.0
+        has_event = any(a <= e <= b for c in group for a, b in (c.segments or []) for e in events)
+
+        track, manual = None, choice is not None
+        if choice and choice.get("mode") == "none":
+            reason = "You chose no music for this clip."
+        elif choice and choice.get("mode") == "track":
+            track = tracks.get(choice.get("track_id"))
+            if track is None or not track.usable:
+                reason = "That track cannot be used" + (": " + " ".join(track.problems) if track else ": it is not in the library.")
+                track = None
+            else:
+                reason = f"You chose “{track.title}”."
+        elif options.music_mode == "off":
+            reason = "Music is turned off for this project."
+        elif options.music_mode == "auto" and is_plain_conversation(coverage, has_event):
+            reason = (f"Plain conversation: talking fills {coverage:.0%} of the clip with nothing else happening, "
+                      "so music would only get in the way.")
+        else:
+            track, reason = choose_track(list(tracks.values()), category, max(float(c.duration or 0) for c in group), uses)
+
+        if track is None:
+            for c in group:
+                out[c.id] = {"used": False, "mode": "manual" if manual else "auto", "reason": reason}
+            continue
+        uses[track.id] = uses.get(track.id, 0) + 1
+        matched = next((m for m in preferred_moods(category) if m in track.moods), None)
+        prev_end = None
+        for c in group:
+            segs = [tuple(x) for x in (c.segments or [])]
+            moment = moments.get(c.moment_id)
+            anchor = to_clip_time(moment.peak, segs) if moment else None
+            spoken = clip_windows(words, segs)
+            speech_db = level_in_windows(audio, spoken) if audio and spoken else None
+            overall = level_in_windows(audio, segs) if audio else None
+            mix = plan_mix(track, float(c.duration or 0), anchor, speech_db,
+                           overall if overall is not None else -30.0, options.music_gap_db, continue_from=prev_end)
+            prev_end = mix["ends_at"]
+            out[c.id] = {
+                "used": True, "mode": "manual" if manual else "auto", "track_id": track.id, "title": track.title,
+                "mood": matched, "reason": reason, "speech_db": None if speech_db is None else round(speech_db, 1),
+                "gap_db": options.music_gap_db, **mix,
+                "licence_name": track.licence_name, "source": track.source,
+                "credit": track.attribution if requires_attribution(track.licence_name) else None,
+            }
+    return out
+
+
+def _music(ctx: StageContext) -> dict:
+    """Choose each clip's background music (or none) and where in the track it starts. No AI."""
+    ctx.report(0.0, "Choosing music")
+    with ctx.session() as s:
+        plans = plan_project_music(s, ctx.settings, ctx.project_id)
+        for c in s.scalars(select(Clip).where(Clip.project_id == ctx.project_id)).all():
+            if c.id in plans:
+                c.music = plans[c.id]
+        project = s.get(Project, ctx.project_id)
+        mode = ProjectOptions(**normalise_options(project.options)).music_mode
+        used = sum(1 for p in plans.values() if p.get("used"))
+        summary = {"mode": mode, "with_music": used, "without_music": len(plans) - used}
+        project.analysis = {**(project.analysis or {}), "music": summary}
+        s.commit()
+    ctx.publish_project()
+    ctx.report(1.0, f"{used} clip(s) with music, {len(plans) - used} without" if plans else "No clips to score")
+    return summary
+
+
+def _prepare_mix(settings, out_dir: Path, stem: str, music: dict | None, tracks: dict[int, TrackInfo],
+                 speech: list[tuple[float, float]], length: float) -> tuple[MixSpec | None, dict | None]:
+    """The mix to render for a clip, and its record (which changes if the track can no longer be used)."""
+    if not music or not music.get("used"):
+        return None, music
+    track = tracks.get(music.get("track_id"))
+    if track is None or not track.usable:
+        why = ("The chosen track is no longer in the library." if track is None
+               else "The chosen track no longer has complete licence details.")
+        return None, {**music, "used": False, "reason": why}
+    envelope = write_envelope(out_dir / f"{stem}_duck.wav", speech, length)
+    return MixSpec(Path(track.file), float(music["offset"]), bool(music["loop"]), float(music["gain_db"]),
+                   float(music["fade_in"]), float(music["fade_out"]), envelope, track.channels), music
+
+
+def _measure_mix(settings, out_dir: Path, stem: str, spec: MixSpec, music: dict,
+                 speech: list[tuple[float, float]], length: float) -> dict:
+    """How far under the speech the music really is, measured on the music as mixed."""
+    stem_wav = render_music_stem(settings, spec, length, out_dir / f"{stem}_music.wav")
+    try:
+        in_speech = level_in_windows(stem_wav, speech)
+        open_level = level_in_windows(stem_wav, silence_gaps(speech, length))
+    finally:
+        stem_wav.unlink(missing_ok=True)
+    speech_db = music.get("speech_db")
+    gap = None if in_speech is None or speech_db is None else round(speech_db - in_speech, 1)
+    return {
+        "speech_db": speech_db,
+        "music_in_speech_db": None if in_speech is None else round(in_speech, 1),
+        "music_open_db": None if open_level is None else round(open_level, 1),
+        "gap_db": gap, "required_gap_db": MIN_GAP_DB, "ok": gap is None or gap >= MIN_GAP_DB,
+    }
+
+
 def _captions(ctx: StageContext) -> dict:
-    """Build word-synced captions for every clip and render a vertical preview with them burned in. No AI."""
+    """Build captions for each clip, mix in its music, and render the vertical preview. No AI.
+
+    With `clip_ids` in the job's parameters only those clips are rendered again.
+    """
+    only = {int(i) for i in (ctx.params.get("clip_ids") or [])}
     with ctx.session() as s:
         project = s.get(Project, ctx.project_id)
         options = ProjectOptions(**normalise_options(project.options))
@@ -525,7 +703,8 @@ def _captions(ctx: StageContext) -> dict:
         source = Path(project.source_path) if project.source_path else None
         proxy = Path(project.proxy_path) if project.proxy_path else None
         clips = [
-            (c.id, c.rank or 0, c.part or 1, [tuple(seg) for seg in (c.segments or [])], float(c.duration or 0))
+            (c.id, c.rank or 0, c.part or 1, [tuple(seg) for seg in (c.segments or [])], float(c.duration or 0),
+             dict(c.music) if c.music else None)
             for c in s.scalars(
                 select(Clip).where(Clip.project_id == ctx.project_id).order_by(Clip.rank, Clip.part, Clip.id)
             ).all()
@@ -536,6 +715,7 @@ def _captions(ctx: StageContext) -> dict:
             .order_by(TranscriptSegment.start, TranscriptSegment.id)
         ).all()
         words = [w for r in rows for w in (r.words or []) if w.get("w")]
+        tracks = {t.id: t for t in load_track_infos(s)}
     # Render from the original when it is still there: the 360p copy is too soft for a 9:16 crop.
     video = source if source and source.is_file() else proxy
     if video is None or not video.is_file():
@@ -545,9 +725,9 @@ def _captions(ctx: StageContext) -> dict:
     out_dir = _clip_dir(ctx.settings, ctx.project_id)
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    made = passed = flagged = 0
-    for n, (clip_id, rank, part, segments, length) in enumerate(clips):
-        ctx.report(n / max(len(clips), 1), f"Captioning clip {n + 1} of {len(clips)}")
+    todo = [c for c in clips if not only or c[0] in only]
+    for n, (clip_id, rank, part, segments, length, music) in enumerate(todo):
+        ctx.report(n / max(len(todo), 1), f"Rendering clip {n + 1} of {len(todo)}")
         if not segments or length < 1.0:
             continue
         lo, hi = segments[0][0], segments[-1][1]
@@ -558,28 +738,38 @@ def _captions(ctx: StageContext) -> dict:
         if result.ass:
             ass_path = out_dir / f"{stem}.ass"
             ass_path.write_text(result.ass, encoding="utf-8")
+        speech = [(w.s, w.e) for w in clip_words(nearby, [list(seg) for seg in segments])]
+        spec, music = _prepare_mix(ctx.settings, out_dir, stem, music, tracks, speech, length)
         dest = out_dir / f"{stem}_vertical.mp4"
-        render_vertical(ctx.settings, video, dest, segments, ass_path, has_audio=has_audio)
-        made += 1
-        passed += result.passed
-        flagged += len(result.flagged)
+        try:
+            render_vertical(ctx.settings, video, dest, segments, ass_path, has_audio=has_audio, music=spec,
+                            audio_channels=int(media.get("audio_channels") or 2))
+            if spec is not None and music is not None:
+                music = {**music, "measured": _measure_mix(ctx.settings, out_dir, stem, spec, music, speech, length)}
+        finally:
+            if spec is not None and spec.envelope is not None:
+                spec.envelope.unlink(missing_ok=True)
         with ctx.session() as s:
             clip = s.get(Clip, clip_id)
             if clip is not None:
                 clip.vertical = str(dest)
+                clip.music = music
                 clip.captions = {**result.report(), "lines": result.lines,
                                  "style": style.model_dump(), "framing": "centre crop (Phase 8 adds smart framing)"}
                 s.commit()
-    summary = {
-        "made": made, "passed": passed, "flagged_words": flagged,
-        "preset": style.preset, "enabled": style.enabled,
-    }
-    with ctx.session() as s:
+
+    with ctx.session() as s:  # the summary covers every clip, not just the ones rendered this time
+        done = [c for c in s.scalars(select(Clip).where(Clip.project_id == ctx.project_id)).all() if c.vertical]
+        made = len(done)
+        passed = sum(1 for c in done if (c.captions or {}).get("passed"))
+        flagged = sum(len((c.captions or {}).get("flagged_words") or []) for c in done)
+        summary = {"made": made, "passed": passed, "flagged_words": flagged,
+                   "preset": style.preset, "enabled": style.enabled}
         project = s.get(Project, ctx.project_id)
         project.analysis = {**(project.analysis or {}), "captions": summary}
         s.commit()
     ctx.publish_project()
-    message = f"{made} clip(s) captioned"
+    message = f"{len(todo)} clip(s) rendered"
     if made - passed:
         message += f", {made - passed} with a caption check to look at"
     if flagged:
@@ -629,10 +819,11 @@ def _ingest_finished(s: Session, job: Job) -> None:
             project.status_detail = (
                 f"Clips were not cut: {job.error}. The picked moments are still there. Use Retry to try again."
             )
-        elif failed_stage == "captions":
+        elif failed_stage in ("captions", "music"):
             project.status = "ready"
             project.status_detail = (
-                f"Captions were not added: {job.error}. The clips are cut and can be reviewed. Use Retry to try again."
+                f"Captions and music were not added: {job.error}. The clips are cut and can be reviewed. "
+                "Use Retry to try again."
             )
         else:
             project.status = "failed"
@@ -662,12 +853,18 @@ _ANALYSE = [
     StageDef("transcript", "Transcribe speech", _transcript),
 ]
 
+_MUSIC = [
+    StageDef("music", "Choose music", _music),
+]
+
+# Rendering is where captions and music are laid on the clip, so it is one stage.
 _CAPTION = [
-    StageDef("captions", "Add captions", _captions),
+    StageDef("captions", "Add captions and music", _captions),
 ]
 
 _CUT = [
     StageDef("clips", "Cut the clips", _clips),
+    *_MUSIC,
     *_CAPTION,
 ]
 
@@ -767,8 +964,10 @@ PIPELINES: dict[str, Pipeline] = {
     "detect": Pipeline(stages=list(_DETECT), on_finish=_ingest_finished, on_retry=_ingest_retried),
     # cutting needs no AI, so it is re-run on its own whenever the duration settings change
     "cut": Pipeline(stages=list(_CUT), on_finish=_ingest_finished, on_retry=_ingest_retried),
-    # restyling captions re-renders the previews only; the cuts stay as they are
+    # restyling captions re-renders the previews only; the cuts and the music choices stay as they are
     "caption": Pipeline(stages=list(_CAPTION), on_finish=_ingest_finished, on_retry=_ingest_retried),
+    # changing the music settings chooses music again and re-renders; the cuts stay as they are
+    "remix": Pipeline(stages=[*_MUSIC, *_CAPTION], on_finish=_ingest_finished, on_retry=_ingest_retried),
     "ingest_url": Pipeline(
         stages=[
             StageDef("metadata", "Look up the video", _metadata, max_attempts=3),

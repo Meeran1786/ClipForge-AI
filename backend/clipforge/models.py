@@ -147,6 +147,8 @@ class Clip(Base):
     # Phase 6: vertical 9:16 preview with captions burned in, and the caption lines + checks
     vertical: Mapped[str | None] = mapped_column(Text, default=None)
     captions: Mapped[dict[str, Any] | None] = mapped_column(JSON, default=None)
+    # Phase 7: the background music chosen for this clip (or why there is none) and how it was mixed
+    music: Mapped[dict[str, Any] | None] = mapped_column(JSON, default=None)
     # pending | approved | rejected   (the user's decision)
     review: Mapped[str | None] = mapped_column(String(20), default="pending")
     overridden: Mapped[bool | None] = mapped_column(default=False)  # approved despite failing a check
@@ -203,6 +205,32 @@ class Moment(Base):
     created_at: Mapped[datetime] = mapped_column(default=utcnow)
 
     project: Mapped[Project] = relationship(back_populates="moments")
+
+
+class Track(Base):
+    """A music track in the library. It can be used only when its licence details are complete."""
+
+    __tablename__ = "tracks"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    title: Mapped[str] = mapped_column(String(200))
+    file: Mapped[str] = mapped_column(Text)  # a copy inside the data folder
+    original_name: Mapped[str | None] = mapped_column(String(300), default=None)
+    duration: Mapped[float] = mapped_column(Float, default=0.0)
+    bpm: Mapped[float | None] = mapped_column(Float, default=None)
+    beats: Mapped[list[float]] = mapped_column(JSON, default=list)
+    phase: Mapped[int] = mapped_column(Integer, default=0)  # which of four beats is the bar's first
+    regularity: Mapped[float] = mapped_column(Float, default=0.0)  # 1 = perfectly steady beat
+    loudness_db: Mapped[float] = mapped_column(Float, default=-20.0)
+    channels: Mapped[int | None] = mapped_column(Integer, default=2)
+    moods: Mapped[list[str]] = mapped_column(JSON, default=list)
+    # licence record: all of these are needed (credit only if the licence asks for it)
+    source: Mapped[str | None] = mapped_column(Text, default=None)
+    licence_name: Mapped[str | None] = mapped_column(String(120), default=None)
+    licence_url: Mapped[str | None] = mapped_column(Text, default=None)
+    licence_note: Mapped[str | None] = mapped_column(Text, default=None)
+    attribution: Mapped[str | None] = mapped_column(Text, default=None)
+    added_at: Mapped[datetime] = mapped_column(default=utcnow)
 
 
 class Setting(Base):

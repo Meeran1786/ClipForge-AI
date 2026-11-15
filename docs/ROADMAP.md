@@ -343,13 +343,79 @@ Not done, and limits:
   and the clip rejected.
 - One language per video (whatever the speech model detected).
 
-## Phase 7 — Music
+## Phase 7 — Music — built 2026-11-16, tested on synthetic music only
 
 - Track library with mandatory licence fields; import UI.
 - Mood matching, "no music" default for conversation, ducking, fades, beat cut.
 
 Gate: with a handful of licensed tracks loaded, speech stays clearly audible
 (measured loudness gap), and a track without licence data cannot be chosen.
+
+What was built: `music.py` (licence rules, track analysis, mood matching, beat
+alignment, ducking envelope), a `tracks` table and music library (import,
+edit licence, play, remove), a `music` stage that chooses each clip's track
+(parts of one moment share one track and the music carries on from part to
+part), music mixed into the render under every spoken word, a measured
+speech-to-music gap recorded for every clip, a per-clip choice in the Clip
+Editor (automatic, none, or a licensed track), and project settings for music
+mode and volume. Changing music settings re-mixes only; the cuts are kept.
+
+Rules enforced in code: a track without complete licence details (source,
+licence, a link or note, and a credit line when the licence needs one) cannot
+be chosen automatically or by hand, and is checked again when a clip is
+rendered. The credit line of a CC BY track is attached to every clip that uses
+it, for the description (Phase 9).
+
+Gate results. Test material was four original tracks I synthesised (bouncy,
+tense, driving, soft; one mono, three stereo) plus a fifth with no licence
+details, and a spoken test video put through the real speech model and real AI
+pick (two moments, one told in three parts):
+
+- Speech stays clearly audible: the music was measured 24 dB under the speech
+  on all four clips (the requirement is 12 dB). With music added, the speech
+  itself changed by at most 0.15 dB (limit 0.6 dB), measured on the rendered
+  files against the same clips rendered without music. In pauses the music is
+  clearly present (25 to 28 dB louder than without it).
+- The unlicensed track, which had the same mood as the funny clips, was never
+  chosen. Choosing it by hand was refused with the missing items listed.
+  Removing a used track's licence made its clips render without music, with
+  the reason.
+- Moods matched: the funny story got the comedic track in all three parts, the
+  "unexpected" clip got the dramatic one.
+- Beat timing on the tracks I made: after correction every track averages
+  within 6 ms of its true beat. The worst single beat was 3 to 16 ms off on
+  tracks with sharp hits and 35 ms off on the soft pad track.
+- 355 automated tests pass, including real renders that measure the gap, the
+  untouched speech, fades, and a beat landing on the key moment within 20 ms.
+
+Faults found and fixed along the way: beats were found about 25 ms late on
+every track measured (now corrected; a first attempt that snapped every beat
+to the nearest bump made the two soft-attack tracks worse, so it only snaps to
+clearly sharp attacks); a drone with no beat was treated as having one; the
+tempo label was off (117.5 for a true 120; now taken from the beat spacing);
+and FFmpeg's default mono-to-stereo conversion silently cut mono tracks and
+mono speech by 3 dB, which made the music quieter than planned.
+
+Not done, and limits:
+
+- **No real music has been tested.** Every track was synthetic. How well beats
+  are found and lined up on real songs, and how the mood tags behave on them,
+  is unmeasured. The 25 ms correction was measured on synthetic tracks only.
+- Beat sync lines a bar line up with the key moment at the start only. The
+  music ends with a fade, not a cut on a beat, and later parts of a connected
+  moment carry on without beat alignment.
+- A tracker can follow every second beat (two of the four tracks were found
+  at half tempo); the beats it finds are still real beats.
+- "Plain conversation" (almost non-stop talking with nothing else happening)
+  gets no music in Automatic; the threshold (90% of the clip) is a judgement
+  that needs tuning on real footage. "Always" overrides it.
+- The mood comes from the moment's category only, not from the sound or the
+  picture.
+- Music is chosen per moment; manual choices are lost when the clips are cut
+  again (a change to duration or selection settings).
+- The final 1080×1920 render with audio mastering is Phase 8; this phase mixes
+  into the preview. The music level is set from the speech and the gap
+  setting, not to a loudness standard such as LUFS.
 
 ## Phase 8 — Framing and rendering
 
@@ -409,5 +475,7 @@ have since been fetched.
 2. Test videos the owner has the right to use, or from streamers who publicly
    allow clipping (before Phase 2 gate).
 3. Music files the owner is allowed to use, for example from the YouTube Audio
-   Library (before Phase 7 gate). Optional: Shorts can ship without music.
+   Library. The Phase 7 gate was run on synthetic music, so a few real
+   licensed tracks are still needed to test beat finding and mood matching on
+   real songs. Optional: Shorts can ship without music.
 4. A Google Cloud project with the YouTube Data API enabled (before Phase 10).

@@ -164,6 +164,10 @@ function ClipSettings({ project }: { project: Project }) {
             {o.split_parts ? `Split into up to ${o.max_parts} parts` : 'Not split into parts'}
           </Fact>
           <Fact label="Dead air">{o.trim_silence ? 'Removed' : 'Kept'}</Fact>
+          <Fact label="Music">
+            {o.music_mode === 'off' ? 'None' : o.music_mode === 'always' ? 'Always' : 'Automatic'}
+            {o.music_mode !== 'off' && ` · ${o.music_gap_db} dB under speech`}
+          </Fact>
         </dl>
       )}
     </Section>

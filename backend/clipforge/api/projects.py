@@ -13,12 +13,13 @@ from sqlalchemy import func, select
 from ..context import AppContext, get_ctx
 from ..ingest import detect_platform
 from ..media import VIDEO_EXTENSIONS
-from ..models import Clip, Job, Moment, Project, TranscriptSegment
-from ..pipelines import default_link_title, reselect, reset_analysis
+from ..models import Clip, Job, Moment, Project, Track, TranscriptSegment
+from ..pipelines import default_link_title, plan_project_music, reselect, reset_analysis, track_info
 from ..rights import download_blocker, write_rights_file
 from ..captions import CaptionStyle
 from ..schemas import (
     AttachFile,
+    ClipMusicChoice,
     ClipReview,
     ProjectCreate,
     ProjectOptions,
@@ -28,6 +29,11 @@ from ..schemas import (
 )
 
 router = APIRouter(prefix="/api/projects", tags=["projects"])
+
+# which changed settings need which work done again
+CUT_KEYS = {"categories", "max_clips", "min_score", "target_duration", "duration_mode", "tolerance_pct",
+            "split_parts", "max_parts", "context", "trim_silence"}
+MUSIC_KEYS = {"music_mode", "music_gap_db"}
 
 
 def _clip_counts(s, project_ids: list[int]) -> dict[int, int]:
@@ -352,21 +358,31 @@ def update_options(project_id: int, body: ProjectOptions, ctx: AppContext = Depe
     Existing moments are re-ranked at once and the clips are cut again with the
     new duration settings. Neither step asks the AI again.
     """
-    recut = False
+    follow_up = None
     with ctx.session() as s:
         project = s.get(Project, project_id)
         if project is None:
             raise HTTPException(404, "Project not found")
-        project.options = body.model_dump()
+        before = normalise_options(project.options)
+        after = body.model_dump()
+        changed = {k for k in after if before.get(k) != after[k]}
+        project.options = after
         reselect(s, project)
         has_moments = bool(s.scalar(select(func.count(Moment.id)).where(Moment.project_id == project_id)))
         if has_moments and not _busy(s, project_id):
-            project.status, project.status_detail = "processing", None
-            recut = True
+            # do only as much again as the change needs: cuts, then music, then captions
+            if changed & CUT_KEYS:
+                follow_up = "cut"
+            elif changed & MUSIC_KEYS:
+                follow_up = "remix"
+            elif "caption_style" in changed:
+                follow_up = "caption"
+            if follow_up:
+                project.status, project.status_detail = "processing", None
         s.commit()
         data = project_to_dict(project)
-    if recut:
-        ctx.worker.enqueue("cut", project_id=project_id)
+    if follow_up:
+        ctx.worker.enqueue(follow_up, project_id=project_id)
     ctx.bus.publish({"type": "project", "id": project_id})
     return data
 
@@ -389,9 +405,49 @@ def clip_to_dict(c: Clip) -> dict:
         "has_preview": bool(c.preview),
         "has_vertical": bool(c.vertical),
         "captions": c.captions,
+        "music": c.music,
         "review": c.review or "pending",
         "overridden": bool(c.overridden),
     }
+
+
+@router.patch("/{project_id}/clips/{clip_id}/music")
+def set_clip_music(project_id: int, clip_id: int, body: ClipMusicChoice, ctx: AppContext = Depends(get_ctx)) -> dict:
+    """Choose this clip's music by hand (or none, or back to automatic) and render it again.
+
+    It applies to every part of the same moment, so connected parts keep the same music.
+    A track whose licence details are incomplete is refused here, not just hidden.
+    """
+    with ctx.session() as s:
+        clip = s.get(Clip, clip_id)
+        if clip is None or clip.project_id != project_id:
+            raise HTTPException(404, "Clip not found")
+        if _busy(s, project_id):
+            raise HTTPException(409, "This project is still processing. Wait for it to finish first.")
+        if body.mode == "track":
+            if body.track_id is None:
+                raise HTTPException(422, "Choose a track")
+            track = s.get(Track, body.track_id)
+            if track is None:
+                raise HTTPException(404, "Track not found")
+            info = track_info(track)
+            if not info.usable:
+                raise HTTPException(409, "This track cannot be used yet: " + " ".join(info.problems))
+        key = clip.moment_id if clip.moment_id is not None else -clip.id
+        forced = None if body.mode == "auto" else {"mode": body.mode, "track_id": body.track_id}
+        plans = plan_project_music(s, ctx.settings, project_id, only_keys={key}, forced={key: forced} if forced else None)
+        ids = []
+        for c in s.scalars(select(Clip).where(Clip.project_id == project_id)).all():
+            if c.id in plans:
+                c.music = plans[c.id]
+                ids.append(c.id)
+        project = s.get(Project, project_id)
+        project.status, project.status_detail = "processing", None
+        s.commit()
+        data = clip_to_dict(clip)
+    ctx.worker.enqueue("caption", project_id=project_id, params={"clip_ids": ids})
+    ctx.bus.publish({"type": "project", "id": project_id})
+    return data
 
 
 @router.get("/{project_id}/clips/{clip_id}/vertical")

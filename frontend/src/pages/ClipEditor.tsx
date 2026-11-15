@@ -23,6 +23,104 @@ function clipLabel(c: Clip) {
   return `Clip ${c.rank}${c.parts > 1 ? ` · Part ${c.part}/${c.parts}` : ''} · ${c.duration.toFixed(0)} s`
 }
 
+function MusicPanel({ project, clip, busy }: { project: Project; clip: Clip; busy: boolean }) {
+  const qc = useQueryClient()
+  const tracks = useQuery({ queryKey: ['tracks'], queryFn: api.tracks })
+  const music = clip.music
+  const choose = useMutation({
+    mutationFn: (v: { mode: 'auto' | 'none' | 'track'; trackId?: number }) =>
+      api.setClipMusic(project.id, clip.id, v.mode, v.trackId),
+    onSuccess: (updated) => {
+      qc.setQueryData(['project', project.id], (old: Project | undefined) => (old ? { ...old, status: 'processing' as const } : old))
+      void qc.invalidateQueries({ queryKey: ['project', project.id] })
+      void qc.invalidateQueries({ queryKey: ['jobs', project.id] })
+      void qc.invalidateQueries({ queryKey: ['clips', project.id] })
+      return updated
+    },
+  })
+  const value = music?.used ? `track:${music.track_id}` : music?.mode === 'manual' ? 'none' : 'auto'
+  const m = music?.measured
+
+  return (
+    <Section title="Music for this clip" aside={music?.used ? <Badge tone="info">{music.mood ?? 'chosen by hand'}</Badge> : <Badge>No music</Badge>}>
+      <label className="label" htmlFor="clip-music">
+        Track
+      </label>
+      <select
+        id="clip-music"
+        className="input"
+        value={value}
+        disabled={busy || choose.isPending}
+        onChange={(e) => {
+          const v = e.target.value
+          if (v === 'auto') choose.mutate({ mode: 'auto' })
+          else if (v === 'none') choose.mutate({ mode: 'none' })
+          else choose.mutate({ mode: 'track', trackId: Number(v.slice(6)) })
+        }}
+      >
+        <option value="auto">Automatic: let ClipForge choose</option>
+        <option value="none">No music for this clip</option>
+        {(tracks.data ?? []).map((t) => (
+          <option key={t.id} value={`track:${t.id}`} disabled={!t.usable}>
+            {t.title}
+            {t.moods.length ? ` · ${t.moods.join(', ')}` : ''}
+            {t.usable ? '' : ' (licence details missing)'}
+          </option>
+        ))}
+      </select>
+      {clip.parts > 1 && (
+        <p className="hint">This applies to every part of this moment, so connected parts keep the same music.</p>
+      )}
+      {choose.isError && (
+        <div className="mt-3">
+          <ErrorNote>{choose.error.message}</ErrorNote>
+        </div>
+      )}
+
+      <p className="mt-4 text-sm leading-relaxed text-soft">{music?.reason ?? 'Music is chosen when the clip is rendered.'}</p>
+      {music?.used && (
+        <dl className="mt-3 space-y-1 text-sm">
+          <div className="flex justify-between gap-3">
+            <dt className="text-soft">Plays from</dt>
+            <dd className="tabular-nums">{clock(music.offset ?? 0)} into the track{music.loop ? ', repeating' : ''}</dd>
+          </div>
+          <div className="flex justify-between gap-3">
+            <dt className="text-soft">Beat</dt>
+            <dd className="max-w-[60%] text-right">
+              {music.beat
+                ? `A ${music.beat.kind === 'downbeat' ? 'bar line' : 'beat'} falls on the key moment at ${clock(music.beat.anchor)}`
+                : (music.beat_note ?? '—')}
+            </dd>
+          </div>
+          {m && m.gap_db != null && (
+            <div className="flex justify-between gap-3">
+              <dt className="text-soft">Under the speech</dt>
+              <dd className={`tabular-nums ${m.ok ? 'text-good' : 'text-bad'}`}>
+                {m.gap_db.toFixed(0)} dB {m.ok ? '✓' : `✕ (needs ${m.required_gap_db} dB or more)`}
+              </dd>
+            </div>
+          )}
+          {m && m.gap_db == null && (
+            <div className="flex justify-between gap-3">
+              <dt className="text-soft">Under the speech</dt>
+              <dd className="text-soft">Nobody speaks here</dd>
+            </div>
+          )}
+          <div className="flex justify-between gap-3">
+            <dt className="text-soft">Licence</dt>
+            <dd className="max-w-[60%] text-right">{music.licence_name} · {music.source}</dd>
+          </div>
+        </dl>
+      )}
+      {music?.used && music.credit && (
+        <p className="mt-3 rounded-md border border-accent/30 bg-accent/10 px-3 py-2 text-xs leading-relaxed text-accent">
+          This licence needs credit. Add to the description: “{music.credit}”
+        </p>
+      )}
+    </Section>
+  )
+}
+
 function Editor({ project, clips, clipId }: { project: Project; clips: Clip[]; clipId: number }) {
   const qc = useQueryClient()
   const [, setParams] = useSearchParams()
@@ -89,6 +187,8 @@ function Editor({ project, clips, clipId }: { project: Project; clips: Clip[]; c
             {clip.category ? ` · ${CATEGORY_LABEL[clip.category] ?? clip.category}` : ''}.
           </p>
         </Section>
+
+        <MusicPanel project={project} clip={clip} busy={busy} />
 
         {caps && (
           <Section title="Caption checks" aside={caps.passed ? <Badge tone="good">All passed</Badge> : <Badge tone="bad">Look at these</Badge>}>
@@ -204,7 +304,7 @@ export default function ClipEditor() {
     <>
       <PageHeader
         title="Clip editor"
-        subtitle="Captions and their style. Vertical framing, music and sound controls arrive in Phases 7 and 8."
+        subtitle="Captions and their style, and each clip's music. Vertical framing arrives in Phase 8."
         actions={
           withClips.length > 0 && (
             <select

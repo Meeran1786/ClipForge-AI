@@ -5,14 +5,14 @@ best moments, cuts them with context, reframes to 9:16, adds word-synced
 captions and optional licensed music, and writes titles and hashtags. Nothing
 is published without approval.
 
-**Status:** Phases 1 to 6 of 10 are built — the app foundation, dashboard,
+**Status:** Phases 1 to 7 of 10 are built — the app foundation, dashboard,
 video ingestion, whole-video analysis, AI moment picking, clip cutting with
-Smart Duration, and word-synced captions. It finds the moments worth
-clipping, cuts each one on whole sentences, and shows a vertical preview with
-captions burned in. It does not yet frame the shot around faces or action,
-add music, render final 1080×1920 Shorts or publish. Everything so far has
-been checked on test videos and an openly licensed film, not on real stream
-footage. See the [roadmap](docs/ROADMAP.md) for what each
+Smart Duration, word-synced captions, and background music. It finds the
+moments worth clipping, cuts each one on whole sentences, and shows a vertical
+preview with captions and music. It does not yet frame the shot around faces
+or action, render final 1080×1920 Shorts or publish. Everything so far has
+been checked on test videos, an openly licensed film and synthetic music, not
+on real stream footage or real songs. See the [roadmap](docs/ROADMAP.md) for what each
 phase adds and the [architecture](docs/ARCHITECTURE.md) for how it fits
 together.
 
@@ -80,6 +80,19 @@ Options: `--port 9000`, `--no-browser`, `--data-dir <folder>`.
   timing and placement checks, and which words the speech model was unsure
   of; those are shown as heard, never guessed. The vertical preview is a plain
   centre crop until Phase 8.
+- Background music from a library of tracks you are licensed to use
+  (Settings → Music library). A track is added with its mood and licence
+  details (where it came from, the licence, a link or note, and a credit line
+  if the licence needs one); until those are complete it cannot be used,
+  automatically or by hand. Each moment gets a track that suits it, or none:
+  music is skipped for non-stop talking in Automatic and can be turned off for
+  a project or for one clip. The music sits well under the speech (about 24 dB
+  while someone is talking), is lowered under every spoken word, fades in and
+  out, and starts on a bar line that lines up with the key moment when the
+  track has a steady beat. Connected parts keep the same track. The speech
+  itself is never altered. A CC BY track's credit line is kept with each clip
+  that uses it. The library starts empty and Shorts are made without music
+  until a matching licensed track is added.
 - Live, stage-by-stage progress for background jobs, with cancel and retry.
   A job interrupted by closing or killing the app continues from the first
   unfinished stage when the app starts again.

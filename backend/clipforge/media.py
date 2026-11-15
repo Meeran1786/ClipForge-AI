@@ -7,6 +7,7 @@ import os
 import subprocess
 import sys
 import tempfile
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable
 
@@ -230,6 +231,76 @@ def _filter_path(path: Path) -> str:
     return "'" + path.resolve().as_posix().replace(":", "\\:").replace("'", "\\'") + "'"
 
 
+@dataclass(frozen=True)
+class MixSpec:
+    """Background music to lay under a clip: which file, where in it to start, how loud, and when to duck."""
+
+    path: Path
+    offset: float = 0.0  # seconds into the track where this clip's music starts
+    loop: bool = False  # the track is shorter than the clip: repeat it
+    gain_db: float = 0.0  # applied to the track as it is (open level, before ducking)
+    fade_in: float = 0.4
+    fade_out: float = 1.0
+    envelope: Path | None = None  # stereo WAV of gain 0..1 over time: lowers the music under speech
+    channels: int = 2  # channels in the track file
+
+
+def _stereo(channels: int) -> str:
+    """Bring a sound to 48 kHz stereo without changing how loud it is.
+
+    FFmpeg's own mono-to-stereo conversion lowers each channel by 3 dB. For a
+    mono sound this puts the same signal in both channels unchanged, so levels
+    measured on the mono sound stay true in the mix.
+    """
+    if channels == 1:
+        return "aresample=48000,pan=stereo|c0=c0|c1=c0,aformat=sample_fmts=fltp"
+    return "aresample=48000,aformat=sample_fmts=fltp:channel_layouts=stereo"
+
+
+_STEREO = _stereo(2)  # for streams already known to be stereo (the ducking envelope)
+
+
+def _music_inputs(music: MixSpec) -> list[str]:
+    args = ["-ss", f"{music.offset:.3f}"]
+    if music.loop:
+        args += ["-stream_loop", "-1"]
+    args += ["-i", str(music.path)]
+    if music.envelope is not None:
+        args += ["-i", str(music.envelope)]
+    return args
+
+
+def _music_chain(music: MixSpec, total: float, music_index: int, out: str) -> list[str]:
+    """Filters that turn the track into the music bus: level, fades, then the speech ducking."""
+    fade_out = min(music.fade_out, total / 2)
+    fade_in = min(music.fade_in, total / 2)
+    chain = [
+        f"[{music_index}:a]{_stereo(music.channels)},atrim=duration={total:.3f},asetpts=PTS-STARTPTS,"
+        f"volume={music.gain_db:.2f}dB,afade=t=in:st=0:d={fade_in:.2f},"
+        f"afade=t=out:st={max(total - fade_out, 0):.3f}:d={fade_out:.2f}[mus]"
+    ]
+    if music.envelope is not None:
+        chain.append(f"[{music_index + 1}:a]{_STEREO},atrim=duration={total:.3f}[env]")
+        chain.append(f"[mus][env]amultiply[{out}]")
+    else:
+        chain.append(f"[mus]anull[{out}]")
+    return chain
+
+
+def render_music_stem(settings: Settings, music: MixSpec, total: float, dest: Path) -> Path:
+    """Just the music as it will sound in the clip (level, fades, ducking), for measuring."""
+    if not settings.ffmpeg:
+        raise MediaError("ffmpeg is not installed (expected in tools\\ffmpeg)")
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    run(
+        [settings.ffmpeg, "-hide_banner", "-loglevel", "error", "-y", *_music_inputs(music),
+         "-filter_complex", ";".join(_music_chain(music, total, 0, "md")),
+         "-map", "[md]", "-t", f"{total:.3f}", "-c:a", "pcm_f32le", "-ar", "48000", str(dest)],
+        timeout=300,
+    )
+    return dest
+
+
 def render_vertical(
     settings: Settings,
     src: Path,
@@ -238,11 +309,14 @@ def render_vertical(
     ass: Path | None,
     has_audio: bool = True,
     width: int = 540,
+    music: MixSpec | None = None,
+    audio_channels: int = 2,
 ) -> Path:
-    """A 9:16 preview of the given ranges with captions burned in.
+    """A 9:16 preview of the given ranges with captions burned in, and music under the speech if given.
 
     Framing is a plain centre crop for now; following faces and the action is
     Phase 8. The captions are laid out for 1080x1920 and scaled with the frame.
+    The clip's own sound is never processed: the music is added to it.
     """
     if not settings.ffmpeg:
         raise MediaError("ffmpeg is not installed (expected in tools\\ffmpeg)")
@@ -250,6 +324,7 @@ def render_vertical(
     if not ranges:
         raise MediaError("Nothing to render: the clip has no length")
     height = width * 16 // 9
+    total = sum(b - a for a, b in ranges)
     dest.parent.mkdir(parents=True, exist_ok=True)
     part = dest.with_name(dest.stem + ".part" + dest.suffix)
 
@@ -260,7 +335,7 @@ def render_vertical(
         if has_audio:
             chains.append(f"[0:a]atrim=start={a:.3f}:end={b:.3f},asetpts=PTS-STARTPTS[a{n}]")
             labels += f"[a{n}]"
-    chains.append(f"{labels}concat=n={len(ranges)}:v=1:a={1 if has_audio else 0}[joined]" + ("[a]" if has_audio else ""))
+    chains.append(f"{labels}concat=n={len(ranges)}:v=1:a={1 if has_audio else 0}[joined]" + ("[a0]" if has_audio else ""))
     look = (
         "crop=w='min(iw,ih*9/16)':h='min(ih,iw*16/9)',"
         f"scale={width}:{height}:flags=lanczos,setsar=1"
@@ -268,13 +343,30 @@ def render_vertical(
     if ass is not None:
         look += f",ass={_filter_path(ass)}:fontsdir={_filter_path(settings.fonts_dir)}"
     chains.append(f"[joined]{look}[v]")
-    cmd = [
-        settings.ffmpeg, "-hide_banner", "-loglevel", "error", "-y", "-i", str(src),
-        "-filter_complex", ";".join(chains), "-map", "[v]",
-    ]
-    if has_audio:
-        cmd += ["-map", "[a]", "-c:a", "aac", "-b:a", "128k"]
-    cmd += ["-c:v", "libx264", "-preset", "veryfast", "-crf", "23", "-pix_fmt", "yuv420p",
+
+    inputs = ["-i", str(src)]
+    audio_out = None
+    if music is not None:
+        inputs += _music_inputs(music)
+        chains += _music_chain(music, total, 1, "md")
+        if has_audio:
+            chains.append(f"[a0]{_stereo(audio_channels)}[ao]")
+            # normalize=0: the clip's own sound stays exactly as loud as it was
+            chains.append("[ao][md]amix=inputs=2:duration=first:dropout_transition=0:normalize=0[mx]")
+            chains.append("[mx]alimiter=limit=0.95:level=0[a]")
+        else:
+            chains.append("[md]alimiter=limit=0.95:level=0[a]")
+        audio_out = "[a]"
+    elif has_audio:
+        audio_out = "[a0]"
+
+    cmd = [settings.ffmpeg, "-hide_banner", "-loglevel", "error", "-y", *inputs,
+           "-filter_complex", ";".join(chains), "-map", "[v]"]
+    if audio_out:
+        cmd += ["-map", audio_out, "-c:a", "aac", "-b:a", "128k"]
+        if music is not None:
+            cmd += ["-ar", "48000"]
+    cmd += ["-t", f"{total:.3f}", "-c:v", "libx264", "-preset", "veryfast", "-crf", "23", "-pix_fmt", "yuv420p",
             "-movflags", "+faststart", str(part)]
     run(cmd, timeout=900)
     return _finish_part(part, dest)

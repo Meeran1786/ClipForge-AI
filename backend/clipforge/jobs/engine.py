@@ -112,6 +112,7 @@ def job_to_dict(job: Job) -> dict[str, Any]:
         "project_id": job.project_id,
         "progress": round(job.progress or 0.0, 4),
         "error": job.error,
+        "params": dict(job.params or {}),
         "created_at": iso(job.created_at),
         "updated_at": iso(job.updated_at),
         "stages": [

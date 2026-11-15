@@ -9,6 +9,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 from .captions import CaptionStyle
 from .duration import MAX_TARGET, MIN_TARGET, DurationSettings
 from .models import Project, iso
+from .music import MOODS
 from .rights import download_blocker
 
 CATEGORIES = [
@@ -39,6 +40,11 @@ class ProjectOptions(BaseModel):
 
     # Phase 6: one caption style per project, so every clip and every part matches
     caption_style: CaptionStyle = Field(default_factory=CaptionStyle)
+
+    # Phase 7: auto = music that suits each moment (not for wall-to-wall talking), off = none,
+    # always = music even for wall-to-wall talking. The gap is how far under the speech it sits.
+    music_mode: Literal["auto", "off", "always"] = "auto"
+    music_gap_db: int = Field(default=14, ge=6, le=30)
 
     @model_validator(mode="before")
     @classmethod
@@ -99,6 +105,35 @@ class AttachFile(BaseModel):
     path: str
 
 
+class TrackFields(BaseModel):
+    """What the owner tells us about a track. Licence fields may be left empty, but then it cannot be used."""
+
+    title: str | None = Field(default=None, max_length=200)
+    moods: list[str] = Field(default_factory=list)
+    source: str | None = Field(default=None, max_length=500)
+    licence_name: str | None = Field(default=None, max_length=120)
+    licence_url: str | None = Field(default=None, max_length=500)
+    licence_note: str | None = Field(default=None, max_length=2000)
+    attribution: str | None = Field(default=None, max_length=500)
+
+    @field_validator("moods")
+    @classmethod
+    def _known_moods(cls, value: list[str]) -> list[str]:
+        unknown = [m for m in value if m not in MOODS]
+        if unknown:
+            raise ValueError(f"Unknown moods: {', '.join(unknown)}")
+        return [m for m in MOODS if m in value]
+
+
+class TrackImport(TrackFields):
+    path: str
+
+
+class ClipMusicChoice(BaseModel):
+    mode: Literal["auto", "none", "track"]
+    track_id: int | None = None
+
+
 class ClipReview(BaseModel):
     review: Literal["pending", "approved", "rejected"]
     override: bool = False  # approve a clip even though it failed a context check
@@ -116,6 +151,7 @@ def project_to_dict(p: Project, *, clip_count: int = 0) -> dict[str, Any]:
             "transcript": transcript or None,
             "moments": analysis.get("moments"),
             "clips": analysis.get("clips"),
+            "music": analysis.get("music"),
             "captions": analysis.get("captions"),
         },
         "source_meta": p.source_meta,

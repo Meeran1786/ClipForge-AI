@@ -27,6 +27,11 @@ frontend/dist/
 *.mkv
 *.wav
 *.mp3
+*.flac
+*.ogg
+*.m4a
+*.aac
+*.opus
 
 # os / editor
 Thumbs.db

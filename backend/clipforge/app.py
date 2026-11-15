@@ -15,6 +15,7 @@ from fastapi.staticfiles import StaticFiles
 
 from . import __version__
 from .api import jobs as jobs_api
+from .api import music as music_api
 from .api import projects as projects_api
 from .api import system as system_api
 from .config import Settings
@@ -93,6 +94,7 @@ def create_app(
         return JSONResponse({"error": message, "details": jsonable_encoder(exc.errors())}, status_code=422)
 
     app.include_router(system_api.router)
+    app.include_router(music_api.router)
     app.include_router(projects_api.router)
     app.include_router(jobs_api.router)
 

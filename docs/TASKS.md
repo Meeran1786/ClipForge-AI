@@ -21,7 +21,7 @@ reaction or an event.
 | Smart Duration panel on New Project, project settings, Settings | Phase 5 | Built |
 | Caption start/end checks, part labels clear of captions | Phase 6 | Built (label itself: Phase 8) |
 | Part labels placed off faces and gameplay, consistent layout across parts | Phase 8 | Not built |
-| Consistent music and audio levels across parts | Phases 7 and 8 | Not built |
+| Consistent music and audio levels across parts | Phase 7 (music), Phase 8 (levels) | Music built (synthetic tracks only); final levels Phase 8 |
 | Per-part titles and hashtags | Phase 9 | Not built |
 | Smart Duration panel in the Clip Editor, manual start/end adjustment | Phases 6–8 | Not built |
 
@@ -85,8 +85,11 @@ Part splitting (Part 1, Part 2, …)
 - [x] Part numbering; no repeated dialogue, no missing dialogue, no overlap:
       parts are consecutive runs of whole sentences.
 - [~] Same caption style across parts: the style is set once per project,
-      so every clip and every part uses it (Phase 6). Same layout, audio
-      levels and music across parts are Phases 7–8.
+      so every clip and every part uses it (Phase 6).
+- [x] Same music across parts: parts of one moment share one track and the
+      music carries on from where the previous part's ended; the same gap
+      under the speech is used for every part (Phase 7).
+- [ ] Same layout and final audio levels across parts (Phase 8).
 - [ ] Optional on-screen PART 1 / PART 2 / PART 3 label that covers neither
       faces nor gameplay (Phase 8).
 - [ ] Titles and hashtags per part (Phase 9).

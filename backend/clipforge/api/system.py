@@ -19,6 +19,7 @@ from ..jobs.engine import job_to_dict
 from ..media import VIDEO_EXTENSIONS, tool_version
 from ..models import Clip, Job, Moment, Project, Setting
 from ..moments import DEFAULT_WEIGHTS, SUBSCORE_MEANING, SUBSCORES, clean_weights, viral_score
+from ..music import AUDIO_EXTENSIONS
 from ..pipelines import WEIGHTS_KEY, load_weights, reselect
 from ..schemas import CATEGORIES, ProjectOptions, project_to_dict
 
@@ -193,6 +194,30 @@ def pick_video_file() -> str | None:
     if proc.returncode != 0:
         raise RuntimeError((proc.stderr or "file dialog failed").strip().splitlines()[-1])
     return proc.stdout.strip() or None
+
+
+_AUDIO_PICKER = _PICKER.replace("Choose a video", "Choose a music track").replace('"Video files"', '"Audio files"')
+
+
+def pick_audio_file() -> str | None:
+    """Open the operating system's file dialog for an audio file."""
+    patterns = " ".join(f"*{ext}" for ext in sorted(AUDIO_EXTENSIONS))
+    proc = subprocess.run(
+        [sys.executable, "-c", _AUDIO_PICKER.replace("{patterns}", patterns)],
+        capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=600,
+        creationflags=subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0,
+    )
+    if proc.returncode != 0:
+        raise RuntimeError((proc.stderr or "file dialog failed").strip().splitlines()[-1])
+    return proc.stdout.strip() or None
+
+
+@router.post("/system/pick-audio")
+def pick_audio() -> dict:
+    try:
+        return {"path": pick_audio_file()}
+    except (RuntimeError, OSError, subprocess.TimeoutExpired) as exc:
+        raise HTTPException(500, f"Could not open the file dialog: {exc}") from exc
 
 
 @router.post("/system/pick-file")

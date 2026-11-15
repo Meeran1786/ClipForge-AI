@@ -1,4 +1,4 @@
-import type { CaptionPreset, ContextLevel, DurationMode, ProjectOptions } from '../api'
+import type { CaptionPreset, ContextLevel, DurationMode, MusicMode, ProjectOptions } from '../api'
 import { CATEGORY_LABEL } from '../format'
 import { EMPTY_OVERRIDES } from './CaptionStyleForm'
 
@@ -53,6 +53,7 @@ export function optionsError(o: ProjectOptions): string | null {
   if (!Number.isInteger(o.target_duration)) return 'Target length must be a whole number of seconds.'
   if (!(o.tolerance_pct >= 0 && o.tolerance_pct <= 30)) return 'Tolerance must be between 0 and 30 percent.'
   if (!(o.max_parts >= 2 && o.max_parts <= 5)) return 'Maximum parts must be between 2 and 5.'
+  if (!(o.music_gap_db >= 6 && o.music_gap_db <= 30)) return 'Music volume must be between 6 and 30 dB under the speech.'
   return null
 }
 
@@ -340,6 +341,51 @@ export function OptionsForm({
           <p className="hint">Fine-tune colours, size and position later in the Clip editor.</p>
         </div>
       </div>
+
+      <fieldset className="rounded-lg border border-line p-4">
+        <legend className="px-1.5 text-sm font-medium">Background music</legend>
+        <div className="grid gap-5 sm:grid-cols-2">
+          <div>
+            <label className="label" htmlFor="music-mode">
+              Music
+            </label>
+            <select
+              id="music-mode"
+              className="input"
+              value={value.music_mode}
+              onChange={(e) => set('music_mode', e.target.value as MusicMode)}
+            >
+              <option value="auto">Automatic: music that suits each moment</option>
+              <option value="always">Always: even for non-stop talking</option>
+              <option value="off">No music</option>
+            </select>
+            <p className="hint">
+              Only tracks with complete licence details are ever used, and only if one matches the moment. Clips that
+              are almost non-stop talking get none in Automatic.
+            </p>
+          </div>
+          <div>
+            <div className="mb-1.5 flex items-baseline justify-between">
+              <label className="text-sm font-medium" htmlFor="music-gap">
+                Music volume
+              </label>
+              <span className="text-sm tabular-nums text-accent">{value.music_gap_db} dB under speech</span>
+            </div>
+            <input
+              id="music-gap"
+              type="range"
+              min={6}
+              max={30}
+              value={value.music_gap_db}
+              onChange={(e) => set('music_gap_db', e.target.valueAsNumber)}
+              className="w-full accent-accent"
+            />
+            <p className="hint">
+              Lower numbers are louder. The music is lowered a further 10 dB while someone is speaking.
+            </p>
+          </div>
+        </div>
+      </fieldset>
 
       <div>
         <div className="mb-1.5 flex items-baseline justify-between">

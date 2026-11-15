@@ -32,6 +32,7 @@ def _no_real_side_effects(monkeypatch):
         raise AssertionError("tests must not open a real file dialog")
 
     monkeypatch.setattr(system_api, "pick_video_file", _refuse)
+    monkeypatch.setattr(system_api, "pick_audio_file", _refuse)
     monkeypatch.setattr("webbrowser.open", lambda *_a, **_k: False)
     monkeypatch.setattr(engine_module, "RETRY_DELAY_SECONDS", 0.01)
 

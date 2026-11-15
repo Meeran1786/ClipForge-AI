@@ -84,6 +84,7 @@ export interface AnalysisSummary {
     preset: CaptionPreset
     enabled: boolean
   } | null
+  music: { mode: MusicMode; with_music: number; without_music: number } | null
 }
 
 export interface Moment {
@@ -154,6 +155,79 @@ export interface ProjectOptions {
   context: ContextLevel
   trim_silence: boolean
   caption_style: CaptionStyle
+  music_mode: MusicMode
+  music_gap_db: number
+}
+
+export type MusicMode = 'auto' | 'off' | 'always'
+
+export interface Track {
+  id: number
+  title: string
+  original_name: string | null
+  duration: number
+  bpm: number | null
+  steady_beat: boolean
+  loudness_db: number
+  moods: string[]
+  source: string | null
+  licence_name: string | null
+  licence_url: string | null
+  licence_note: string | null
+  attribution: string | null
+  requires_attribution: boolean
+  usable: boolean
+  problems: string[]
+  warnings: string[]
+  added_at: string
+  used_by: number
+}
+
+export interface TrackFields {
+  title?: string
+  moods?: string[]
+  source?: string
+  licence_name?: string
+  licence_url?: string
+  licence_note?: string
+  attribution?: string
+}
+
+export interface MusicMeta {
+  moods: { name: string; label: string }[]
+  licences: { name: string; requires_attribution: boolean }[]
+  category_moods: Record<string, string[]>
+  audio_extensions: string[]
+  min_gap_db: number
+}
+
+export interface ClipMusic {
+  used: boolean
+  mode: 'auto' | 'manual'
+  reason: string
+  track_id?: number
+  title?: string
+  mood?: string | null
+  offset?: number
+  loop?: boolean
+  gain_db?: number
+  open_db?: number
+  gap_db?: number
+  speech_db?: number | null
+  level_basis?: string
+  beat?: { anchor: number; beat_time: number; kind: 'downbeat' | 'beat'; error_ms: number } | null
+  beat_note?: string | null
+  licence_name?: string | null
+  source?: string | null
+  credit?: string | null
+  measured?: {
+    speech_db: number | null
+    music_in_speech_db: number | null
+    music_open_db: number | null
+    gap_db: number | null
+    required_gap_db: number
+    ok: boolean
+  }
 }
 
 export type CaptionPreset = 'viral' | 'bold' | 'minimal' | 'gaming'
@@ -253,6 +327,7 @@ export interface Clip {
   has_preview: boolean
   has_vertical: boolean
   captions: ClipCaptions | null
+  music: ClipMusic | null
   review: 'pending' | 'approved' | 'rejected'
   overridden: boolean
 }
@@ -380,6 +455,19 @@ export const api = {
     request<Clip>(`/api/projects/${projectId}/clips/${clipId}`, {
       method: 'PATCH',
       body: JSON.stringify({ review, override }),
+    }),
+  tracks: () => request<Track[]>('/api/music'),
+  musicMeta: () => request<MusicMeta>('/api/music/meta'),
+  pickAudio: () => post<{ path: string | null }>('/api/system/pick-audio'),
+  importTrack: (t: TrackFields & { path: string }) => post<Track>('/api/music/import', t),
+  updateTrack: (id: number, t: TrackFields) =>
+    request<Track>(`/api/music/${id}`, { method: 'PATCH', body: JSON.stringify(t) }),
+  deleteTrack: (id: number, force = false) =>
+    request<void>(`/api/music/${id}${force ? '?force=true' : ''}`, { method: 'DELETE' }),
+  setClipMusic: (projectId: number, clipId: number, mode: 'auto' | 'none' | 'track', trackId?: number) =>
+    request<Clip>(`/api/projects/${projectId}/clips/${clipId}/music`, {
+      method: 'PATCH',
+      body: JSON.stringify({ mode, track_id: trackId ?? null }),
     }),
   captionPresets: () => request<CaptionPresets>('/api/captions/presets'),
   updateCaptions: (projectId: number, style: CaptionStyle) =>

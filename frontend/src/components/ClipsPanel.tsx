@@ -123,6 +123,14 @@ function ClipCard({ project, clip }: { project: Project; clip: Clip }) {
             </p>
           )}
 
+          {clip.music && (
+            <p className={`mt-1 text-xs ${clip.music.measured && !clip.music.measured.ok ? 'text-bad' : 'text-soft'}`}>
+              {clip.music.used
+                ? `Music: “${clip.music.title}”${clip.music.measured?.gap_db != null ? `, ${clip.music.measured.gap_db.toFixed(0)} dB under the speech` : ''}${clip.music.credit ? ' · needs a credit line' : ''}.`
+                : `No music: ${clip.music.reason}`}
+            </p>
+          )}
+
           <p className="mt-2 text-xs text-faint">
             {r.first_word != null && (
               <>

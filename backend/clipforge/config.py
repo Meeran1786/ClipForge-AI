@@ -56,6 +56,10 @@ class Settings(BaseSettings):
         return self.data_dir / "clipforge.db"
 
     @property
+    def music_dir(self) -> Path:
+        return self.data_dir / "music"
+
+    @property
     def logs_dir(self) -> Path:
         return self.data_dir / "logs"
 
@@ -85,5 +89,5 @@ class Settings(BaseSettings):
         return self._tool("ffprobe")
 
     def ensure_dirs(self) -> None:
-        for d in (self.data_dir, self.logs_dir, self.projects_dir, self.tmp_dir):
+        for d in (self.data_dir, self.logs_dir, self.projects_dir, self.tmp_dir, self.music_dir):
             d.mkdir(parents=True, exist_ok=True)

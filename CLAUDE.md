@@ -38,6 +38,7 @@ and what was not done. Never call a feature done because its screen exists.
 | `backend/clipforge/moments.py` | AI moment detection and viral score |
 | `backend/clipforge/duration.py` | Smart Duration engine: exact clip boundaries and part splitting, no AI |
 | `backend/clipforge/captions.py` | Word-synced captions: lines, styles, ASS output, timing and placement checks |
+| `backend/clipforge/music.py` | Licensed music: licence rules, track analysis, mood matching, beat alignment, ducking envelope |
 | `backend/clipforge/rights.py` | Rights record and the download gate |
 | `frontend/src/` | React + TypeScript + Tailwind dashboard |
 | `data/` | Database, project files, speech models (not in git) |
@@ -49,7 +50,7 @@ and what was not done. Never call a feature done because its screen exists.
 Run from the repository root (`D:\ClipForge-AI`).
 
 - Tests: `backend\.venv\Scripts\python -m pytest -q` from `backend`
-  (about 250 tests, two to four minutes).
+  (about 355 tests, five to six minutes).
 - Dashboard build, after any frontend change: `npm run build` in `frontend`.
   The server serves `frontend/dist`; it does not hot-reload.
 - Start the app: `clipforge.cmd` (`--port`, `--no-browser`, `--data-dir`).
@@ -69,6 +70,16 @@ Run from the repository root (`D:\ClipForge-AI`).
   re-cutting; only "Pick moments again" asks the AI.
 - **Captions show what was heard.** Never correct, add or drop a word; flag
   unsure ones.
+- **No track without a complete licence record is ever used.** The check is
+  in `music.licence_problems` and is applied when importing, when choosing
+  (automatic or by hand) and when rendering. Never add a path around it, and
+  never put music files in git. Test tracks must be original or properly
+  licensed, and are kept outside the repository.
+- **The clip's own sound is never processed.** Music is added to it and
+  lowered under speech; mono sounds are copied to both channels at unity
+  (FFmpeg's default mono-to-stereo conversion cuts 3 dB per channel).
+- When measuring audio in a test, compare the same channel of both files:
+  FFmpeg's stereo-to-mono downmix adds the channels and reads 3 dB louder.
 - **Database changes** must be new nullable columns: `db.add_missing_columns`
   upgrades existing databases in place.
 - **Heavy files live on D:.** C: is nearly full.
