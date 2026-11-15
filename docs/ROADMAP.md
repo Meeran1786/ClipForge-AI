@@ -413,11 +413,10 @@ Not done, and limits:
   picture.
 - Music is chosen per moment; manual choices are lost when the clips are cut
   again (a change to duration or selection settings).
-- The final 1080×1920 render with audio mastering is Phase 8; this phase mixes
-  into the preview. The music level is set from the speech and the gap
-  setting, not to a loudness standard such as LUFS.
+- The music level is set from the speech and the gap setting; the finished
+  mix is brought to −14 LUFS in the final render (Phase 8).
 
-## Phase 8 — Framing and rendering
+## Phase 8 — Framing and rendering — done 2026-11-16
 
 - Face and facecam detection, smoothed crop paths, four layouts, reaction zoom.
 - Final FFmpeg render: 1080×1920, H.264, AAC, source frame rate; Quick Sync
@@ -425,6 +424,79 @@ Not done, and limits:
 
 Gate: rendered clips from a facecam gaming video and a talking-head video keep
 the subject in frame throughout; captions never cover a face.
+
+What was built: `framing.py` (YuNet face scan, facecam found once per video
+and snapped to the overlay's edges, four layouts with an automatic choice, a
+camera path smoothed per shot that jumps at cuts, a push-in on the key moment,
+caption height and PART label placed off faces) and a frame compositor that
+pipes OpenCV-built frames into FFmpeg. A `framing` stage between music and
+rendering; previews are now framed. A `final` job renders approved clips at
+1080×1920 (Quick Sync, AAC 48 kHz) with one loudness gain to −14 LUFS, a
+peak limiter, and a check list per file. Dashboard: layout, zoom and part-label
+settings; per-clip layout, framing explanation, final render and download in
+the Clip editor; "Render approved Shorts" on the project. Details in
+[ARCHITECTURE.md](ARCHITECTURE.md), section 5.
+
+Gate results. Two videos through the real app (real speech model, real AI
+pick): a 6-minute facecam "gaming" video I composed from two Blender films
+(Big Buck Bunny as the game, Tears of Steel in a 648×274 facecam at the bottom
+right, its sound as the streamer's), and Tears of Steel itself as the
+talking-head film. Both CC BY 3.0, Blender Foundation. Nine clips in all, one
+moment told in two parts. Checked by a separate script, not the app's own
+report:
+
+- **Subject in frame: 470 of 470 face samples.** In split screen the
+  streamer was in the top panel at every sample (160/160); in the film the
+  people worth framing were in the crop at every sample (310/310). The
+  facecam was found at the bottom right (a face in it 82% of the time) and
+  its box snapped to within 4 px of the overlay on all four sides. The film
+  had no facecam and every clip went to full screen following the speaker.
+- **Captions never covered a face.** The face model was run again on the
+  rendered final Shorts, 5 frames a second: in 302 frames with a caption on
+  screen no real face was under it. Two frames were flagged; I looked at both
+  and they were a hand and a neck (false detections). In split screen the
+  captions moved from 76% to 46% down (just under the streamer panel), or to
+  38% for one clip. The PART 1/2 and 2/2 labels touched no face in any of 26
+  frames.
+- **Final files:** seven Shorts, all 1080×1920 H.264 (Quick Sync) / AAC,
+  at the source frame rate (30 and 24 fps). Loudness −14.1 to −14.9 LUFS,
+  one at −15.6 LUFS held back so its peaks stay under the limit (the film's
+  own mix already peaks at 0 dB); true peak −1.1 to −4.7 dBTP. Every file
+  passed its checks.
+- 391 automated tests pass, including real renders that check the size,
+  the joined ranges, −14 LUFS with one gain for quiet and loud passages
+  alike, and that re-encoding the sound leaves the picture untouched.
+
+Faults found and fixed along the way: in one short window the bunny's face
+outweighed the facecam (fixed by deciding the facecam from every clip
+together); the facecam box guessed from faces showed gameplay above the
+streamer (fixed by snapping to the overlay's edges, then by searching between
+the faces and the guess, because a face cut off by the overlay's edge gets a
+box that reaches past it); a film clip took an actor standing to one side for a
+facecam; the camera panned across shot changes the scene detector had missed,
+flipped between two people of similar size and chased a tiny background face;
+a face half out of the crop was ignored when placing captions; loudness was
+measured on the mono sound but delivered in stereo (3 dB too loud); AAC pushed
+a dense mix 1.8 dB over the limiter's ceiling (now measured after encoding and
+corrected by re-encoding the sound only); the zoom moved 2% a frame (now about
+1%).
+
+Not done, and limits:
+
+- **No real stream footage yet.** The facecam video is a composite with a
+  clean rectangular overlay; real facecams with rounded corners, transparent
+  backgrounds, chroma-keyed streamers or moving overlays are untested.
+- The gameplay panel is a centred crop (moved off the facecam); it does not
+  follow the action on screen. Only faces steer the camera.
+- With two people too far apart to fit, the camera stays with one of them; it
+  does not cut between speakers by who is talking.
+- Text placement avoids faces only, not the game's HUD or on-screen text.
+- A layout chosen by hand is lost when the clips are cut again.
+- The final render runs at about 1 to 1.8 times the clip's length on this
+  machine (the frames are built in Python); previews at about half the length.
+- The facecam reaction and inset layouts were exercised by tests and
+  renders, but the gate ran with the automatic choice (split screen and full
+  screen).
 
 ## Phase 9 — Quality control and export
 
@@ -466,6 +538,7 @@ have since been fetched.
 | Gemini SDK or CLI bridge | 3 | needs API key or working CLI sign-in |
 | faster-whisper (small model, ~500 MB) | 3 | model cache on D: |
 | Fonts: Montserrat, Poppins, Anton | 6 | SIL Open Font License; `tools\fonts`, licences alongside |
+| YuNet face model (`face_detection_yunet_2023mar.onnx`, 228 KB) | 8 | MIT licence, OpenCV Zoo; `tools\models`, licence alongside |
 
 ## Needed from the owner
 

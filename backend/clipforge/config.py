@@ -46,6 +46,8 @@ class Settings(BaseSettings):
     transcript_chunk_seconds: int = 600
 
     fonts_dir: Path = REPO_ROOT / "tools" / "fonts"
+    # OpenCV's YuNet face model (MIT licence), for framing the shot around faces.
+    face_model: Path = REPO_ROOT / "tools" / "models" / "face_detection_yunet_2023mar.onnx"
 
     @property
     def models_dir(self) -> Path:

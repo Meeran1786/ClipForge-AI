@@ -18,6 +18,7 @@ CATEGORIES = [
 ]
 
 RightsStatus = Literal["own", "licensed", "creator_permission", "unverified"]
+Layout = Literal["auto", "full", "facecam_inset", "reaction", "split"]
 
 
 class ProjectOptions(BaseModel):
@@ -45,6 +46,11 @@ class ProjectOptions(BaseModel):
     # always = music even for wall-to-wall talking. The gap is how far under the speech it sits.
     music_mode: Literal["auto", "off", "always"] = "auto"
     music_gap_db: int = Field(default=14, ge=6, le=30)
+
+    # Phase 8: auto = split screen when a facecam is found, otherwise full screen following the speaker.
+    layout: Layout = "auto"
+    zoom: bool = True  # a slow push-in on each clip's key moment
+    part_labels: bool = True  # "PART 1/2" over the opening seconds of connected parts
 
     @model_validator(mode="before")
     @classmethod
@@ -134,6 +140,14 @@ class ClipMusicChoice(BaseModel):
     track_id: int | None = None
 
 
+class ClipFraming(BaseModel):
+    layout: Layout  # "auto" goes back to the project's own choice
+
+
+class FinalRender(BaseModel):
+    clip_ids: list[int] | None = None  # None = every approved clip
+
+
 class ClipReview(BaseModel):
     review: Literal["pending", "approved", "rejected"]
     override: bool = False  # approve a clip even though it failed a context check
@@ -153,6 +167,8 @@ def project_to_dict(p: Project, *, clip_count: int = 0) -> dict[str, Any]:
             "clips": analysis.get("clips"),
             "music": analysis.get("music"),
             "captions": analysis.get("captions"),
+            "framing": analysis.get("framing"),
+            "final": analysis.get("final"),
         },
         "source_meta": p.source_meta,
         "has_proxy": bool(p.proxy_path),

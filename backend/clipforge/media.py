@@ -301,6 +301,261 @@ def render_music_stem(settings: Settings, music: MixSpec, total: float, dest: Pa
     return dest
 
 
+def _audio_graph(
+    ranges: list[tuple[float, float]], has_audio: bool, music: MixSpec | None, audio_channels: int,
+    src_index: int, music_index: int, total: float, gain_db: float | None = None, peak_limit: float | None = None,
+) -> tuple[list[str], str | None]:
+    """The clip's sound (its ranges joined), with the music mixed under it. Returns filters and the output label.
+
+    The clip's own sound is never processed: the music is added to it. `gain_db`
+    is the final render's single loudness gain on the finished mix (speech and
+    music alike), and `peak_limit` the limiter ceiling that follows it.
+    """
+    chains: list[str] = []
+    if has_audio:
+        labels = ""
+        for n, (a, b) in enumerate(ranges):
+            chains.append(f"[{src_index}:a]atrim=start={a:.3f}:end={b:.3f},asetpts=PTS-STARTPTS[s{n}]")
+            labels += f"[s{n}]"
+        chains.append(f"{labels}concat=n={len(ranges)}:v=0:a=1[a0]")
+    out = None
+    if music is not None:
+        chains += _music_chain(music, total, music_index, "md")
+        if has_audio:
+            chains.append(f"[a0]{_stereo(audio_channels)}[ao]")
+            # normalize=0: the clip's own sound stays exactly as loud as it was
+            chains.append("[ao][md]amix=inputs=2:duration=first:dropout_transition=0:normalize=0[mx]")
+            chains.append("[mx]alimiter=limit=0.95:level=0[mix]")
+        else:
+            chains.append("[md]alimiter=limit=0.95:level=0[mix]")
+        out = "mix"
+    elif has_audio:
+        out = "a0"
+    if out is not None and (gain_db is not None or peak_limit is not None):
+        level = f"volume={gain_db or 0.0:.2f}dB"
+        if peak_limit is not None:
+            # limited at four times the sample rate, so peaks that fall between samples are caught too
+            level += (f",aresample=192000,alimiter=limit={peak_limit:.4f}:level=0:attack=5:release=60:latency=1,"
+                      "aresample=48000")
+        chains.append(f"[{out}]{_stereo(audio_channels if music is None else 2)},{level}[lvl]")
+        out = "lvl"
+    return chains, (f"[{out}]" if out else None)
+
+
+def read_frames(
+    settings: Settings, video: Path, start: float, end: float, fps: float, size: tuple[int, int]
+):
+    """Frames of `video` from start to end at a fixed rate and size, as BGR numpy arrays (FFmpeg decodes)."""
+    import numpy as np
+
+    if not settings.ffmpeg:
+        raise MediaError("ffmpeg is not installed (expected in tools\\ffmpeg)")
+    w, h = size
+    cmd = [settings.ffmpeg, "-hide_banner", "-loglevel", "error", "-ss", f"{start:.3f}", "-i", str(video),
+           "-t", f"{max(end - start, 0.01):.3f}", "-an", "-sn",
+           "-vf", f"fps={fps:.4f},scale={w}:{h}:flags=area,setsar=1",
+           "-f", "rawvideo", "-pix_fmt", "bgr24", "-"]
+    proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, creationflags=_NO_WINDOW)
+    frame_bytes = w * h * 3
+    try:
+        assert proc.stdout is not None
+        while True:
+            raw = proc.stdout.read(frame_bytes)
+            if len(raw) < frame_bytes:
+                break
+            yield np.frombuffer(raw, dtype=np.uint8).reshape(h, w, 3)
+    finally:
+        proc.kill()
+        proc.wait()
+
+
+_QSV_OK: dict[str, bool] = {}
+
+
+def hardware_encoder(settings: Settings) -> bool:
+    """Whether Intel Quick Sync H.264 encoding works on this computer (checked once)."""
+    exe = settings.ffmpeg or ""
+    if exe not in _QSV_OK:
+        try:
+            run([exe, "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "testsrc2=s=320x240:r=30:d=0.2",
+                 "-c:v", "h264_qsv", "-f", "null", "-"], timeout=30)
+            _QSV_OK[exe] = True
+        except (MediaError, OSError):
+            _QSV_OK[exe] = False
+    return _QSV_OK[exe]
+
+
+def _video_codec(settings: Settings, final: bool, fps: float) -> list[str]:
+    gop = str(max(1, round(fps * 2)))
+    if not final:
+        return ["-c:v", "libx264", "-preset", "veryfast", "-crf", "23", "-pix_fmt", "yuv420p", "-g", gop]
+    if hardware_encoder(settings):
+        return ["-c:v", "h264_qsv", "-preset", "slow", "-b:v", "10M", "-maxrate", "14M", "-bufsize", "20M",
+                "-profile:v", "high", "-pix_fmt", "nv12", "-g", gop]
+    return ["-c:v", "libx264", "-preset", "medium", "-crf", "18", "-profile:v", "high", "-pix_fmt", "yuv420p",
+            "-g", gop]
+
+
+def render_framed(
+    settings: Settings,
+    src: Path,
+    dest: Path,
+    ranges: list[tuple[float, float]],
+    draw: Callable[[Any, float], Any],
+    decode_size: tuple[int, int],
+    ass: Path | None,
+    *,
+    width: int = 540,
+    fps: float = 30.0,
+    has_audio: bool = True,
+    music: MixSpec | None = None,
+    audio_channels: int = 2,
+    final: bool = False,
+    gain_db: float | None = None,
+    peak_limit: float | None = None,
+    check: Callable[[], None] | None = None,
+    on_progress: Callable[[float], None] | None = None,
+) -> Path:
+    """A 9:16 render where every frame is built in Python by `draw(frame, clip_time)` and piped to FFmpeg.
+
+    The source is decoded at `decode_size`, frame by frame across the ranges;
+    `draw` returns the composed frame at the output size. Captions are burned on
+    top, and the sound is the clip's own with the music under it. `final` uses
+    the delivery encoder (Quick Sync when present) at a high bitrate and 48 kHz
+    AAC at 192 kb/s.
+    """
+    if not settings.ffmpeg:
+        raise MediaError("ffmpeg is not installed (expected in tools\\ffmpeg)")
+    ranges = [(float(a), float(b)) for a, b in ranges if b - a > 0.02]
+    if not ranges:
+        raise MediaError("Nothing to render: the clip has no length")
+    height = width * 16 // 9
+    total = sum(b - a for a, b in ranges)
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    part = dest.with_name(dest.stem + ".part" + dest.suffix)
+
+    inputs = ["-f", "rawvideo", "-pix_fmt", "bgr24", "-s", f"{width}x{height}", "-r", f"{fps:.4f}", "-i", "-"]
+    chains: list[str] = []
+    look = "setsar=1"
+    if ass is not None:
+        look += f",ass={_filter_path(ass)}:fontsdir={_filter_path(settings.fonts_dir)}"
+    chains.append(f"[0:v]{look}[v]")
+    if has_audio:
+        inputs += ["-i", str(src)]
+    if music is not None:
+        inputs += _music_inputs(music)
+    audio_chains, audio_out = _audio_graph(ranges, has_audio, music, audio_channels, 1, 2 if has_audio else 1,
+                                           total, gain_db, peak_limit)
+    chains += audio_chains
+    cmd = [settings.ffmpeg, "-hide_banner", "-loglevel", "error", "-y", *inputs,
+           "-filter_complex", ";".join(chains), "-map", "[v]"]
+    if audio_out:
+        cmd += ["-map", audio_out, "-c:a", "aac", "-b:a", "192k" if final else "128k", "-ar", "48000"]
+    cmd += ["-t", f"{total:.3f}", *_video_codec(settings, final, fps), "-r", f"{fps:.4f}",
+            "-movflags", "+faststart", str(part)]
+
+    with tempfile.TemporaryFile() as err:
+        proc = subprocess.Popen(cmd, stdin=subprocess.PIPE, stdout=subprocess.DEVNULL, stderr=err,
+                                creationflags=_NO_WINDOW)
+        expected = max(1, round(total * fps))
+        written = 0
+        last = None
+        try:
+            assert proc.stdin is not None
+            offset = 0.0
+            for a, b in ranges:
+                count = max(1, round((b - a) * fps))
+                k = 0
+                for frame in read_frames(settings, src, a, b, fps, decode_size):
+                    if k >= count:
+                        break
+                    last = draw(frame, offset + k / fps)
+                    proc.stdin.write(last.tobytes())
+                    k += 1
+                    written += 1
+                    if written % 15 == 0:
+                        if check:
+                            check()
+                        if on_progress:
+                            on_progress(min(1.0, written / expected))
+                while k < count and last is not None:  # the source ran out early: hold the last frame
+                    proc.stdin.write(last.tobytes())
+                    k += 1
+                    written += 1
+                offset += b - a
+            proc.stdin.close()
+            proc.wait()
+        except BrokenPipeError:
+            proc.wait()
+        except BaseException:
+            proc.kill()
+            proc.wait()
+            raise
+        if proc.returncode != 0:
+            err.seek(0)
+            tail = err.read().decode("utf-8", "replace").strip().splitlines()[-3:]
+            raise MediaError(f"ffmpeg failed: {' | '.join(tail) or 'no output'}")
+    return _finish_part(part, dest)
+
+
+def replace_audio(
+    settings: Settings, video_file: Path, src: Path, ranges: list[tuple[float, float]], *, has_audio: bool = True,
+    music: MixSpec | None = None, audio_channels: int = 2, gain_db: float | None = None,
+    peak_limit: float | None = None,
+) -> Path:
+    """Mix and encode a rendered file's sound again (new gain or ceiling); the picture is copied untouched."""
+    if not settings.ffmpeg:
+        raise MediaError("ffmpeg is not installed (expected in tools\\ffmpeg)")
+    ranges = [(float(a), float(b)) for a, b in ranges if b - a > 0.02]
+    total = sum(b - a for a, b in ranges)
+    inputs = ["-i", str(video_file), "-i", str(src)] + (_music_inputs(music) if music is not None else [])
+    chains, out = _audio_graph(ranges, has_audio, music, audio_channels, 1, 2, total, gain_db, peak_limit)
+    if out is None:
+        return video_file
+    part = video_file.with_name(video_file.stem + ".part" + video_file.suffix)
+    run([settings.ffmpeg, "-hide_banner", "-loglevel", "error", "-y", *inputs, "-filter_complex", ";".join(chains),
+         "-map", "0:v:0", "-map", out, "-c:v", "copy", "-c:a", "aac", "-b:a", "192k", "-ar", "48000",
+         "-t", f"{total:.3f}", "-movflags", "+faststart", str(part)], timeout=900)
+    return _finish_part(part, video_file)
+
+
+def measure_loudness(
+    settings: Settings, src: Path, ranges: list[tuple[float, float]], *, has_audio: bool = True,
+    music: MixSpec | None = None, audio_channels: int = 2, whole_file: bool = False,
+) -> dict[str, float] | None:
+    """Integrated loudness (LUFS) and true peak (dBTP) of the clip's finished mix, or of a whole file."""
+    if not settings.ffmpeg:
+        raise MediaError("ffmpeg is not installed (expected in tools\\ffmpeg)")
+    if whole_file:
+        cmd = [settings.ffmpeg, "-hide_banner", "-nostats", "-i", str(src), "-vn",
+               "-af", "loudnorm=print_format=json", "-f", "null", "-"]
+    else:
+        ranges = [(float(a), float(b)) for a, b in ranges if b - a > 0.02]
+        total = sum(b - a for a, b in ranges)
+        inputs = ["-i", str(src)] + (_music_inputs(music) if music is not None else [])
+        chains, out = _audio_graph(ranges, has_audio, music, audio_channels, 0, 1, total)
+        if out is None:
+            return None
+        # measured as it will be heard: stereo, the way the render delivers it (a mono sound
+        # copied to both channels reads 3 dB louder than the mono sound itself)
+        chains.append(f"{out}{_stereo(audio_channels if music is None else 2)},loudnorm=print_format=json[m]")
+        cmd = [settings.ffmpeg, "-hide_banner", "-nostats", *inputs, "-filter_complex", ";".join(chains),
+               "-map", "[m]", "-t", f"{total:.3f}", "-f", "null", "-"]
+    proc = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=900,
+                          creationflags=_NO_WINDOW)
+    text = proc.stderr or ""
+    start = text.rfind("{")
+    end = text.rfind("}")
+    if proc.returncode != 0 or start < 0 or end < start:
+        tail = text.strip().splitlines()[-3:]
+        raise MediaError(f"Loudness could not be measured: {' | '.join(tail) or 'no output'}")
+    data = json.loads(text[start:end + 1])
+    i, tp = _float(data.get("input_i")), _float(data.get("input_tp"))
+    if i is None or i < -70:  # silence
+        return {"lufs": None, "true_peak": tp}
+    return {"lufs": round(i, 2), "true_peak": None if tp is None else round(tp, 2)}
+
+
 def render_vertical(
     settings: Settings,
     src: Path,
@@ -332,10 +587,7 @@ def render_vertical(
     for n, (a, b) in enumerate(ranges):
         chains.append(f"[0:v]trim=start={a:.3f}:end={b:.3f},setpts=PTS-STARTPTS[v{n}]")
         labels += f"[v{n}]"
-        if has_audio:
-            chains.append(f"[0:a]atrim=start={a:.3f}:end={b:.3f},asetpts=PTS-STARTPTS[a{n}]")
-            labels += f"[a{n}]"
-    chains.append(f"{labels}concat=n={len(ranges)}:v=1:a={1 if has_audio else 0}[joined]" + ("[a0]" if has_audio else ""))
+    chains.append(f"{labels}concat=n={len(ranges)}:v=1:a=0[joined]")
     look = (
         "crop=w='min(iw,ih*9/16)':h='min(ih,iw*16/9)',"
         f"scale={width}:{height}:flags=lanczos,setsar=1"
@@ -345,20 +597,10 @@ def render_vertical(
     chains.append(f"[joined]{look}[v]")
 
     inputs = ["-i", str(src)]
-    audio_out = None
     if music is not None:
         inputs += _music_inputs(music)
-        chains += _music_chain(music, total, 1, "md")
-        if has_audio:
-            chains.append(f"[a0]{_stereo(audio_channels)}[ao]")
-            # normalize=0: the clip's own sound stays exactly as loud as it was
-            chains.append("[ao][md]amix=inputs=2:duration=first:dropout_transition=0:normalize=0[mx]")
-            chains.append("[mx]alimiter=limit=0.95:level=0[a]")
-        else:
-            chains.append("[md]alimiter=limit=0.95:level=0[a]")
-        audio_out = "[a]"
-    elif has_audio:
-        audio_out = "[a0]"
+    audio_chains, audio_out = _audio_graph(ranges, has_audio, music, audio_channels, 0, 1, total)
+    chains += audio_chains
 
     cmd = [settings.ffmpeg, "-hide_banner", "-loglevel", "error", "-y", *inputs,
            "-filter_complex", ";".join(chains), "-map", "[v]"]

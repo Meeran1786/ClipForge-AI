@@ -5,14 +5,16 @@ best moments, cuts them with context, reframes to 9:16, adds word-synced
 captions and optional licensed music, and writes titles and hashtags. Nothing
 is published without approval.
 
-**Status:** Phases 1 to 7 of 10 are built — the app foundation, dashboard,
+**Status:** Phases 1 to 8 of 10 are built — the app foundation, dashboard,
 video ingestion, whole-video analysis, AI moment picking, clip cutting with
-Smart Duration, word-synced captions, and background music. It finds the
-moments worth clipping, cuts each one on whole sentences, and shows a vertical
-preview with captions and music. It does not yet frame the shot around faces
-or action, render final 1080×1920 Shorts or publish. Everything so far has
-been checked on test videos, an openly licensed film and synthetic music, not
-on real stream footage or real songs. See the [roadmap](docs/ROADMAP.md) for what each
+Smart Duration, word-synced captions, background music, and vertical framing
+with the final render. It finds the moments worth clipping, cuts each one on
+whole sentences, frames it around the speaker or the streamer's facecam, adds
+captions and music, and renders finished 1080×1920 Shorts you can download.
+It does not yet run the quality checks, write titles and descriptions, or
+publish. Everything so far has been checked on test videos, openly licensed
+films and synthetic music, not on real stream footage or real songs. See the
+[roadmap](docs/ROADMAP.md) for what each
 phase adds and the [architecture](docs/ARCHITECTURE.md) for how it fits
 together.
 
@@ -78,8 +80,7 @@ Options: `--port 9000`, `--no-browser`, `--data-dir <folder>`.
   animation speed for the whole project, so connected parts match, and
   re-renders the previews. Each clip shows whether its captions passed the
   timing and placement checks, and which words the speech model was unsure
-  of; those are shown as heard, never guessed. The vertical preview is a plain
-  centre crop until Phase 8.
+  of; those are shown as heard, never guessed.
 - Background music from a library of tracks you are licensed to use
   (Settings → Music library). A track is added with its mood and licence
   details (where it came from, the licence, a link or note, and a credit line
@@ -93,6 +94,23 @@ Options: `--port 9000`, `--no-browser`, `--data-dir <folder>`.
   itself is never altered. A CC BY track's credit line is kept with each clip
   that uses it. The library starts empty and Shorts are made without music
   until a matching licensed track is added.
+- Vertical framing. Faces are found in every clip on this computer (no AI).
+  A streamer's facecam is recognised once for the whole video, and its box is
+  lined up with the overlay's edges. Layouts: full screen following the
+  speaker's face, split screen (streamer on top, gameplay below), gameplay
+  with the facecam in a corner, or a facecam reaction. Automatic picks split
+  screen when there is a facecam and full screen otherwise; each clip can be
+  changed in the Clip editor. The camera glides after the face, cuts with the
+  scene, and pushes in slowly on the key moment. Captions move up or down if
+  they would cover a face, and connected parts get a "PART 1/2" label for
+  their first seconds, placed clear of faces and captions. Each clip says
+  what was found and why its layout was chosen.
+- Final Shorts. Approved clips are rendered at 1080×1920 (H.264 through Intel
+  Quick Sync when available, AAC 48 kHz) at the video's own frame rate, with
+  one overall volume change to reach YouTube's loudness (−14 LUFS) and a
+  limiter on peaks only. Each file is checked (size, codecs, length,
+  loudness, peak) and can be downloaded from the Clip editor; they are kept in
+  the project's `final` folder.
 - Live, stage-by-stage progress for background jobs, with cancel and retry.
   A job interrupted by closing or killing the app continues from the first
   unfinished stage when the app starts again.
@@ -100,7 +118,7 @@ Options: `--port 9000`, `--no-browser`, `--data-dir <folder>`.
 - Settings → Pipeline self-test: checks FFmpeg, renders a captioned vertical
   test clip, checks storage.
 
-Clip editor and Generated Shorts are placeholders until their phases.
+Generated Shorts is a placeholder until Phase 9.
 
 ## Set up on a new machine
 
@@ -116,6 +134,10 @@ FFmpeg. After cloning:
    `Montserrat-Black.ttf` (github.com/JulietaUla/Montserrat), `Anton-Regular.ttf`
    and `Poppins-SemiBold.ttf` (github.com/google/fonts, `ofl/`). All are under
    the SIL Open Font License. Settings shows whether all four are found.
+7. Put the face model in `tools\models\`: `face_detection_yunet_2023mar.onnx`
+   from github.com/opencv/opencv_zoo (`models/face_detection_yunet`, MIT
+   licence). Without it the app still works but keeps the centre of the
+   picture instead of following faces.
 
 ## Layout
 
@@ -126,6 +148,7 @@ FFmpeg. After cloning:
 | `backend/tests` | tests (`backend\.venv\Scripts\python -m pytest` from `backend`) |
 | `frontend` | React dashboard (`npm run build` after changing it) |
 | `tools/ffmpeg` | FFmpeg and ffprobe (not in git) |
+| `tools/models` | the YuNet face model (not in git) |
 | `data` | database, logs, per-project files (not in git) |
 
 ## Rights

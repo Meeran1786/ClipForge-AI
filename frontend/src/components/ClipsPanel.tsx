@@ -56,7 +56,7 @@ function ClipCard({ project, clip }: { project: Project; clip: Clip }) {
           )}
           <p className="mt-1.5 text-[11px] text-faint">
             {clip.has_vertical
-              ? 'With captions. Framing is a centre crop until Phase 8.'
+              ? `${clip.framing?.layout_label ?? 'Framed'}, with captions${clip.final?.exists ? ' · final Short rendered' : ''}.`
               : 'Plain preview. Captions are added after cutting.'}
           </p>
         </div>
@@ -182,7 +182,7 @@ function ClipCard({ project, clip }: { project: Project; clip: Clip }) {
                 to={`/editor?project=${project.id}&clip=${clip.id}`}
                 className="ml-auto text-xs text-soft hover:text-ink"
               >
-                Edit captions
+                {clip.final?.exists ? 'Rendered · open' : 'Framing and captions'}
               </Link>
             )}
             {review.isError && <span className="text-xs text-bad">{review.error.message}</span>}
@@ -204,6 +204,15 @@ export function ClipsPanel({ project, clips, busy }: { project: Project; clips: 
       void qc.invalidateQueries({ queryKey: ['jobs', project.id] })
     },
   })
+  const final = useMutation({
+    mutationFn: () => api.renderFinal(project.id),
+    onSuccess: (updated) => {
+      qc.setQueryData(['project', project.id], updated)
+      void qc.invalidateQueries({ queryKey: ['jobs', project.id] })
+    },
+  })
+  const approved = clips.filter((c) => c.review === 'approved').length
+  const rendered = clips.filter((c) => c.final?.exists).length
 
   return (
     <Section
@@ -246,6 +255,22 @@ export function ClipsPanel({ project, clips, busy }: { project: Project; clips: 
             {summary.duplicates_dropped > 0 && ` · ${summary.duplicates_dropped} dropped as repeats`} · each{' '}
             {describeDuration(project.options)}. Changing “Clip settings” cuts them again without asking the AI.
           </p>
+          <div className="mb-4 flex flex-wrap items-center gap-3 rounded-md border border-line px-3 py-2.5">
+            <button
+              className="btn btn-primary"
+              disabled={approved === 0 || busy || final.isPending}
+              onClick={() => final.mutate()}
+            >
+              {final.isPending ? 'Starting…' : `Render ${approved || ''} approved Short${approved === 1 ? '' : 's'}`}
+            </button>
+            <span className="text-sm text-soft">
+              {approved === 0
+                ? 'Approve the clips you want, then render them at 1080×1920.'
+                : `1080×1920 with framing, captions and music, levelled to YouTube’s loudness.`}
+              {rendered > 0 && ` ${rendered} rendered so far; download each from the Clip editor.`}
+            </span>
+            {final.isError && <ErrorNote>{final.error.message}</ErrorNote>}
+          </div>
           <ol className="space-y-3">
             {clips.map((c) => (
               <ClipCard key={c.id} project={project} clip={c} />

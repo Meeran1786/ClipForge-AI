@@ -1,4 +1,4 @@
-import type { CaptionPreset, ContextLevel, DurationMode, MusicMode, ProjectOptions } from '../api'
+import type { CaptionPreset, ContextLevel, DurationMode, Layout, MusicMode, ProjectOptions } from '../api'
 import { CATEGORY_LABEL } from '../format'
 import { EMPTY_OVERRIDES } from './CaptionStyleForm'
 
@@ -383,6 +383,59 @@ export function OptionsForm({
             <p className="hint">
               Lower numbers are louder. The music is lowered a further 10 dB while someone is speaking.
             </p>
+          </div>
+        </div>
+      </fieldset>
+
+      <fieldset className="rounded-lg border border-line p-4">
+        <legend className="px-1.5 text-sm font-medium">Vertical framing</legend>
+        <div className="grid gap-5 sm:grid-cols-2">
+          <div>
+            <label className="label" htmlFor="layout">
+              Layout
+            </label>
+            <select
+              id="layout"
+              className="input"
+              value={value.layout}
+              onChange={(e) => set('layout', e.target.value as Layout)}
+            >
+              <option value="auto">Automatic: split screen with a facecam, otherwise follow the speaker</option>
+              <option value="full">Full screen, following the speaker's face</option>
+              <option value="split">Split screen: streamer on top, gameplay below</option>
+              <option value="facecam_inset">Gameplay with the facecam in a corner</option>
+              <option value="reaction">Facecam reaction: the streamer fills the frame</option>
+            </select>
+            <p className="hint">
+              Layouts that need a facecam fall back to full screen when none is found. Each clip can be changed in the
+              Clip editor.
+            </p>
+          </div>
+          <div className="space-y-3 pt-1">
+            <label className="flex items-start gap-2 text-sm">
+              <input
+                type="checkbox"
+                className="mt-0.5 accent-accent"
+                checked={value.zoom}
+                onChange={(e) => set('zoom', e.target.checked)}
+              />
+              <span>
+                Push in on the key moment
+                <span className="hint block">A slow 15% zoom, held for a moment and eased back.</span>
+              </span>
+            </label>
+            <label className="flex items-start gap-2 text-sm">
+              <input
+                type="checkbox"
+                className="mt-0.5 accent-accent"
+                checked={value.part_labels}
+                onChange={(e) => set('part_labels', e.target.checked)}
+              />
+              <span>
+                Show “PART 1/2” on connected parts
+                <span className="hint block">For the first 2.5 seconds, placed clear of faces and captions.</span>
+              </span>
+            </label>
           </div>
         </div>
       </fieldset>

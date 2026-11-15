@@ -1,7 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useEffect, useRef, useState } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
-import { api, type CaptionStyle, type Clip, type Project } from '../api'
+import { api, LAYOUT_LABEL, type CaptionStyle, type Clip, type Layout, type Project } from '../api'
 import { CaptionStyleForm } from '../components/CaptionStyleForm'
 import { CATEGORY_LABEL, duration as clock } from '../format'
 import { Badge, Empty, ErrorNote, JobPanel, PageHeader, Section, Spinner } from '../ui'
@@ -12,7 +12,7 @@ const CHECK_LABEL: Record<string, string> = {
   no_caption_ends_before_its_words: 'No line disappears before it is spoken',
   no_caption_lingers: 'No line hangs around after it is spoken',
   every_word_once: 'Every spoken word shown once, in order',
-  clear_of_part_label: 'Clear of the Part label area',
+  clear_of_part_label: 'Clear of the top of the frame (Part label)',
   clear_of_platform_buttons: 'Clear of YouTube’s buttons and title',
   fits_the_width: 'Each line fits the width',
   speech: 'Speech',
@@ -121,6 +121,137 @@ function MusicPanel({ project, clip, busy }: { project: Project; clip: Clip; bus
   )
 }
 
+function useStartedJob(project: Project) {
+  const qc = useQueryClient()
+  return () => {
+    qc.setQueryData(['project', project.id], (old: Project | undefined) => (old ? { ...old, status: 'processing' as const } : old))
+    void qc.invalidateQueries({ queryKey: ['project', project.id] })
+    void qc.invalidateQueries({ queryKey: ['jobs', project.id] })
+    void qc.invalidateQueries({ queryKey: ['clips', project.id] })
+  }
+}
+
+function FramingPanel({ project, clip, busy }: { project: Project; clip: Clip; busy: boolean }) {
+  const started = useStartedJob(project)
+  const f = clip.framing
+  const choose = useMutation({
+    mutationFn: (layout: Layout) => api.setClipLayout(project.id, clip.id, layout),
+    onSuccess: started,
+  })
+  const caps = clip.captions
+  return (
+    <Section title="Framing" aside={f ? <Badge tone="info">{f.layout_label}</Badge> : <Badge>Not framed yet</Badge>}>
+      <label className="label" htmlFor="clip-layout">
+        Layout
+      </label>
+      <select
+        id="clip-layout"
+        className="input"
+        value={f?.requested ?? 'auto'}
+        disabled={busy || choose.isPending || !f}
+        onChange={(e) => choose.mutate(e.target.value as Layout)}
+      >
+        <option value="auto">Project setting ({LAYOUT_LABEL[project.options.layout]})</option>
+        {(['full', 'split', 'facecam_inset', 'reaction'] as Layout[]).map((l) => (
+          <option key={l} value={l}>
+            {LAYOUT_LABEL[l]}
+          </option>
+        ))}
+      </select>
+      {clip.parts > 1 && <p className="hint">This applies to every part of this moment, so connected parts match.</p>}
+      {choose.isError && (
+        <div className="mt-3">
+          <ErrorNote>{choose.error.message}</ErrorNote>
+        </div>
+      )}
+      {f && (
+        <ul className="mt-4 space-y-1.5 text-sm leading-relaxed text-soft">
+          <li>{f.reason}</li>
+          <li>{f.subject.note}</li>
+          {f.follow && <li>The camera follows the face smoothly and cuts with the scene.</li>}
+          {f.zoom_at != null && <li>Pushes in on the key moment at {clock(f.zoom_at)}.</li>}
+          {caps?.moved && <li className="text-accent">{caps.moved}</li>}
+          {caps?.label && (
+            <li>
+              “{caps.label.text}” shows for the first 2.5 s at the {caps.label.where}, clear of faces and captions.
+            </li>
+          )}
+        </ul>
+      )}
+    </Section>
+  )
+}
+
+function FinalPanel({ project, clip, busy }: { project: Project; clip: Clip; busy: boolean }) {
+  const started = useStartedJob(project)
+  const render = useMutation({ mutationFn: () => api.renderFinal(project.id, [clip.id]), onSuccess: started })
+  const fin = clip.final
+  const approved = clip.review === 'approved'
+  return (
+    <Section
+      title="Final Short"
+      aside={fin?.exists ? <Badge tone={fin.passed ? 'good' : 'bad'}>{fin.passed ? 'Ready' : 'Look at the checks'}</Badge> : null}
+    >
+      {fin?.exists ? (
+        <>
+          <dl className="space-y-1 text-sm">
+            <div className="flex justify-between gap-3">
+              <dt className="text-soft">File</dt>
+              <dd className="max-w-[65%] truncate text-right" title={fin.name}>{fin.name}</dd>
+            </div>
+            <div className="flex justify-between gap-3">
+              <dt className="text-soft">Picture</dt>
+              <dd className="tabular-nums">
+                {fin.width}×{fin.height}, {fin.fps} fps, {(fin.size_bytes / 1e6).toFixed(1)} MB
+              </dd>
+            </div>
+            {fin.loudness.lufs != null && (
+              <div className="flex justify-between gap-3">
+                <dt className="text-soft">Loudness</dt>
+                <dd className="tabular-nums">
+                  {fin.loudness.lufs.toFixed(1)} LUFS, peak {fin.loudness.true_peak?.toFixed(1)} dBTP
+                </dd>
+              </div>
+            )}
+          </dl>
+          <ul className="mt-3 space-y-1 text-xs">
+            {fin.checks.map((c) => (
+              <li key={c.name} className="flex gap-2">
+                <span className={c.ok ? 'text-good' : 'text-bad'}>{c.ok ? '✓' : '✕'}</span>
+                <span className="text-soft">{c.detail}</span>
+              </li>
+            ))}
+          </ul>
+          <div className="mt-4 flex flex-wrap gap-3">
+            <a className="btn btn-primary" href={`/api/projects/${project.id}/clips/${clip.id}/final?download=1`}>
+              Download
+            </a>
+            <button className="btn" disabled={busy || render.isPending} onClick={() => render.mutate()}>
+              Render again
+            </button>
+          </div>
+        </>
+      ) : (
+        <>
+          <p className="text-sm text-soft">
+            {approved
+              ? 'Renders this clip at 1080×1920 with its framing, captions and music, levelled to YouTube’s loudness.'
+              : 'Approve this clip first; only approved clips are rendered as final Shorts.'}
+          </p>
+          <button className="btn btn-primary mt-3" disabled={!approved || busy || render.isPending} onClick={() => render.mutate()}>
+            {render.isPending ? 'Starting…' : 'Render final Short'}
+          </button>
+        </>
+      )}
+      {render.isError && (
+        <div className="mt-3">
+          <ErrorNote>{render.error.message}</ErrorNote>
+        </div>
+      )}
+    </Section>
+  )
+}
+
 function Editor({ project, clips, clipId }: { project: Project; clips: Clip[]; clipId: number }) {
   const qc = useQueryClient()
   const [, setParams] = useSearchParams()
@@ -183,11 +314,13 @@ function Editor({ project, clips, clipId }: { project: Project; clips: Clip[]; c
             </Empty>
           )}
           <p className="mt-2 text-xs leading-relaxed text-faint">
-            {caps?.framing ?? 'Centre crop.'} Clip {clip.rank}
+            {clip.framing?.layout_label ?? 'Centre crop'} · Clip {clip.rank}
             {clip.category ? ` · ${CATEGORY_LABEL[clip.category] ?? clip.category}` : ''}.
           </p>
         </Section>
 
+        <FramingPanel project={project} clip={clip} busy={busy} />
+        <FinalPanel project={project} clip={clip} busy={busy} />
         <MusicPanel project={project} clip={clip} busy={busy} />
 
         {caps && (
@@ -304,7 +437,7 @@ export default function ClipEditor() {
     <>
       <PageHeader
         title="Clip editor"
-        subtitle="Captions and their style, and each clip's music. Vertical framing arrives in Phase 8."
+        subtitle="Each clip's framing, captions, music and final 1080×1920 render."
         actions={
           withClips.length > 0 && (
             <select

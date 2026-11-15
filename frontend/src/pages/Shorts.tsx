@@ -10,7 +10,10 @@ export default function Shorts() {
           You will be able to preview each one, approve or reject it, regenerate captions, change music, and export one
           or all.
         </p>
-        <p>Nothing can appear here until clip extraction (Phase 5) and rendering (Phase 8) are built.</p>
+        <p>
+          Until then, finished 1080×1920 Shorts are rendered and downloaded from each project’s clips and the Clip
+          editor.
+        </p>
       </NotBuilt>
     </>
   )

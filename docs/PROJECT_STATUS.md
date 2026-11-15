@@ -1,15 +1,18 @@
 # ClipForge AI — Project status
 
-Updated 2026-11-16, after Phase 7. Detail for each phase is in
+Updated 2026-11-16, after Phase 8. Detail for each phase is in
 [ROADMAP.md](ROADMAP.md); feature items are in [TASKS.md](TASKS.md).
 
 ## Where it stands
 
 The app takes a video file or a permitted YouTube or Twitch link, analyses
-it, has an AI pick and score the best moments, cuts each one into a clip on
-whole sentences, and adds word-synced captions and licensed background music,
-with a vertical preview to approve or reject. It does not yet frame the shot
-around faces or action, render final Shorts or publish.
+it, has an AI pick and score the best moments, and cuts each one into a clip
+on whole sentences. Each clip is framed for 9:16: split screen when the
+streamer has a facecam, otherwise full screen following the speaker's face.
+It gets word-synced captions kept off faces, a PART label on connected parts,
+and licensed background music. Approved clips are rendered as finished
+1080×1920 Shorts levelled to YouTube's loudness, ready to download. Quality
+checks, titles and descriptions, export and publishing are still to come.
 
 | Phase | What | State |
 | --- | --- | --- |
@@ -20,8 +23,8 @@ around faces or action, render final Shorts or publish.
 | 5 | Clip extraction with Smart Duration and part splitting | Done |
 | 6 | Captions | Done |
 | 7 | Music | Built; tested on synthetic music only |
-| 8 | Vertical framing and rendering | Next |
-| 9 | Quality checks and export | Not started |
+| 8 | Vertical framing and rendering | Done (facecam tested on a composite, not a real stream) |
+| 9 | Quality checks and export | Next |
 | 10 | YouTube publishing | Not started |
 
 ## Open items that need the owner
@@ -30,7 +33,8 @@ around faces or action, render final Shorts or publish.
    judge whether at least seven are worth clipping. Nothing has yet run on
    real stream or gaming footage.
 2. **Test videos** you are allowed to use, for that check and for the later
-   phases.
+   phases. A real stream with a facecam would show how framing copes with
+   overlays that are not clean rectangles.
 3. **A few real music tracks** you are allowed to use (for example from the
    YouTube Audio Library), to test beat finding and mood matching on real
    songs. Phase 7 was tested on synthetic music only. Optional: Shorts can be
@@ -39,7 +43,7 @@ around faces or action, render final Shorts or publish.
 
 ## How it has been verified
 
-- 355 automated tests, using stand-ins for the platforms, the speech model
+- 391 automated tests, using stand-ins for the platforms, the speech model
   and the AI.
 - Live runs with the real speech model and the real AI on: synthetic spoken
   test videos with known answers, and Tears of Steel (12 minutes of real
@@ -53,6 +57,11 @@ around faces or action, render final Shorts or publish.
 - Music checked on the rendered files: 24 dB under the speech on every clip,
   the speech changed by at most 0.15 dB when music was added, and the
   unlicensed track was never used (synthetic tracks, spoken test video).
+- Framing checked on a composed facecam "gaming" video and on Tears of Steel,
+  by running the face model again on the rendered Shorts: the subject was in
+  frame at 470 of 470 face samples, no caption covered a face in 302 frames,
+  and no PART label touched one. Seven final Shorts at 1080×1920, −14.1 to
+  −15.6 LUFS, peaks at −1.1 dBTP or lower.
 
 ## Known limits
 
@@ -62,8 +71,11 @@ around faces or action, render final Shorts or publish.
 - The AI sees still frames, not moving video or sound. Each call carries about
   28,000 tokens of fixed overhead.
 - No speaker identification; who is talking is inferred from timing.
-- The vertical preview is a plain centre crop, which can leave a speaker out
-  of shot, and captions do not yet avoid faces. Both are Phase 8.
+- Framing follows faces only: the gameplay panel is a centred crop and does
+  not follow the action; with two people too far apart the camera stays with
+  one. Captions avoid faces, not the game's HUD. Real facecam overlays
+  (rounded, transparent, keyed) are untested.
+- The final render takes about 1 to 1.8 times the clip's length here.
 - No real music has been tested: beat finding and mood matching are measured
   on synthetic tracks only (beats within 6 ms on average, worst case 35 ms).
 - About one caption word in nine on real film dialogue is flagged as one the

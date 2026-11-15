@@ -19,9 +19,9 @@ reaction or an event.
 | --- | --- | --- |
 | Target duration, modes, ending detection, part splitting | Phase 5 | Built |
 | Smart Duration panel on New Project, project settings, Settings | Phase 5 | Built |
-| Caption start/end checks, part labels clear of captions | Phase 6 | Built (label itself: Phase 8) |
-| Part labels placed off faces and gameplay, consistent layout across parts | Phase 8 | Not built |
-| Consistent music and audio levels across parts | Phase 7 (music), Phase 8 (levels) | Music built (synthetic tracks only); final levels Phase 8 |
+| Caption start/end checks, part labels clear of captions | Phase 6 | Built |
+| Part labels placed off faces, consistent layout across parts | Phase 8 | Built |
+| Consistent music and audio levels across parts | Phase 7 (music), Phase 8 (levels) | Built (music tested on synthetic tracks only) |
 | Per-part titles and hashtags | Phase 9 | Not built |
 | Smart Duration panel in the Clip Editor, manual start/end adjustment | Phases 6–8 | Not built |
 
@@ -89,9 +89,15 @@ Part splitting (Part 1, Part 2, …)
 - [x] Same music across parts: parts of one moment share one track and the
       music carries on from where the previous part's ended; the same gap
       under the speech is used for every part (Phase 7).
-- [ ] Same layout and final audio levels across parts (Phase 8).
-- [ ] Optional on-screen PART 1 / PART 2 / PART 3 label that covers neither
-      faces nor gameplay (Phase 8).
+- [x] Same layout and final audio levels across parts (Phase 8). The facecam
+      is found once for the whole video, so every part gets the same split;
+      a layout chosen by hand applies to every part of the moment; every
+      final part is levelled to the same loudness (−14 LUFS).
+- [~] Optional on-screen PART 1/2 label (project setting, on by default),
+      shown for the first 2.5 s and placed where it touches no face and no
+      caption (Phase 8). It avoids faces, not gameplay as such: in split
+      screen it sits over the streamer panel's top edge or the game when
+      that is where no face is.
 - [ ] Titles and hashtags per part (Phase 9).
 
 Caption and video sync (Phase 6)
@@ -102,9 +108,9 @@ Caption and video sync (Phase 6)
 - [x] No caption ends before the speaker or lingers more than 0.3 s after
       the dialogue; a line gives way to the next one instead of overlapping.
 - [x] The last caption is never cut off by the end of the clip.
-- [~] Captions never overlap the part label: every clip is checked to keep
-      its captions out of the top 18% of the frame, which is reserved for the
-      label. The label itself is drawn in Phase 8.
+- [x] Captions never overlap the part label: the label is placed only where
+      it misses the caption band (Phase 8), and captions stay out of the top
+      18% of the frame.
 
 Pre-export validation
 - [x] Report per clip: requested duration, actual duration, first spoken
@@ -123,9 +129,9 @@ Interface
       difference, a preview, and Approve / Reject.
 - [~] "Adjust the result" is done by changing the settings, which re-cuts at
       once without the AI. Dragging a clip's own start or end is not built.
-- [ ] The Smart Duration panel inside the Clip Editor. The Clip Editor now
-      exists (Phase 6) but holds caption style only; duration is still set in
-      the project's Clip settings.
+- [ ] The Smart Duration panel inside the Clip Editor. The Clip Editor holds
+      framing, caption style, music and the final render; duration is still
+      set in the project's Clip settings.
 
 Test cases (automated, in `backend/tests/test_duration.py`)
 - [x] 1. Target 35 s, sentence finishes at 37 s.

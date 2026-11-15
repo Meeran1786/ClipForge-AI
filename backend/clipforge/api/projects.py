@@ -19,8 +19,10 @@ from ..rights import download_blocker, write_rights_file
 from ..captions import CaptionStyle
 from ..schemas import (
     AttachFile,
+    ClipFraming,
     ClipMusicChoice,
     ClipReview,
+    FinalRender,
     ProjectCreate,
     ProjectOptions,
     RightsUpdate,
@@ -34,6 +36,7 @@ router = APIRouter(prefix="/api/projects", tags=["projects"])
 CUT_KEYS = {"categories", "max_clips", "min_score", "target_duration", "duration_mode", "tolerance_pct",
             "split_parts", "max_parts", "context", "trim_silence"}
 MUSIC_KEYS = {"music_mode", "music_gap_db"}
+FRAME_KEYS = {"layout", "zoom"}
 
 
 def _clip_counts(s, project_ids: list[int]) -> dict[int, int]:
@@ -375,7 +378,9 @@ def update_options(project_id: int, body: ProjectOptions, ctx: AppContext = Depe
                 follow_up = "cut"
             elif changed & MUSIC_KEYS:
                 follow_up = "remix"
-            elif "caption_style" in changed:
+            elif changed & FRAME_KEYS:
+                follow_up = "reframe"
+            elif "caption_style" in changed or "part_labels" in changed:
                 follow_up = "caption"
             if follow_up:
                 project.status, project.status_detail = "processing", None
@@ -406,9 +411,99 @@ def clip_to_dict(c: Clip) -> dict:
         "has_vertical": bool(c.vertical),
         "captions": c.captions,
         "music": c.music,
+        "framing": _framing_view(c.framing),
+        "final": _final_view(c.final),
         "review": c.review or "pending",
         "overridden": bool(c.overridden),
     }
+
+
+def _framing_view(f: dict | None) -> dict | None:
+    """What the dashboard shows about the framing (the camera path itself stays on the server)."""
+    if not f:
+        return None
+    plan = f.get("plan") or {}
+    return {"requested": f.get("requested"), "layout": f.get("layout"), "layout_label": f.get("layout_label"),
+            "reason": f.get("reason"), "subject": f.get("subject"), "samples": f.get("samples"),
+            "detector": f.get("detector"), "follow": plan.get("follow"),
+            "zoom_at": plan.get("anchor") if plan.get("zoom") else None}
+
+
+def _final_view(f: dict | None) -> dict | None:
+    if not f:
+        return None
+    return {k: v for k, v in f.items() if k != "file"} | {"exists": bool(f.get("file") and Path(f["file"]).is_file())}
+
+
+@router.patch("/{project_id}/clips/{clip_id}/framing")
+def set_clip_framing(project_id: int, clip_id: int, body: ClipFraming, ctx: AppContext = Depends(get_ctx)) -> dict:
+    """Choose this clip's layout by hand ("auto" = the project's choice) and render its preview again.
+
+    Connected parts of one moment get the same layout, so they look alike.
+    """
+    with ctx.session() as s:
+        clip = s.get(Clip, clip_id)
+        if clip is None or clip.project_id != project_id:
+            raise HTTPException(404, "Clip not found")
+        if _busy(s, project_id):
+            raise HTTPException(409, "This project is still processing. Wait for it to finish first.")
+        siblings = [c for c in s.scalars(select(Clip).where(Clip.project_id == project_id)).all()
+                    if c.id == clip.id or (clip.moment_id is not None and c.moment_id == clip.moment_id)]
+        requested = None if body.layout == "auto" else body.layout
+        for c in siblings:
+            c.framing = {**(c.framing or {}), "requested": requested}
+        project = s.get(Project, project_id)
+        project.status, project.status_detail = "processing", None
+        s.commit()
+        ids = [c.id for c in siblings]
+        data = clip_to_dict(clip)
+    ctx.worker.enqueue("reframe", project_id=project_id, params={"clip_ids": ids})
+    ctx.bus.publish({"type": "project", "id": project_id})
+    return data
+
+
+@router.post("/{project_id}/render-final")
+def render_final(project_id: int, body: FinalRender, ctx: AppContext = Depends(get_ctx)) -> dict:
+    """Render finished 1080x1920 Shorts: the clips named, or every approved clip. No AI call."""
+    with ctx.session() as s:
+        project = s.get(Project, project_id)
+        if project is None:
+            raise HTTPException(404, "Project not found")
+        if _busy(s, project_id):
+            raise HTTPException(409, "This project is still processing. Wait for it to finish first.")
+        clips = s.scalars(select(Clip).where(Clip.project_id == project_id)).all()
+        if body.clip_ids:
+            chosen = [c for c in clips if c.id in set(body.clip_ids)]
+            if len(chosen) != len(set(body.clip_ids)):
+                raise HTTPException(404, "Clip not found")
+            not_ok = [c for c in chosen if c.review != "approved"]
+            if not_ok:
+                raise HTTPException(409, "Only approved clips are rendered as final Shorts. Approve the clip first.")
+        else:
+            chosen = [c for c in clips if c.review == "approved"]
+            if not chosen:
+                raise HTTPException(409, "No clip is approved yet. Approve the clips you want, then render them.")
+        project.status, project.status_detail = "processing", None
+        s.commit()
+        ids = [c.id for c in chosen]
+        data = project_to_dict(project)
+    ctx.worker.enqueue("final", project_id=project_id, params={"clip_ids": ids})
+    ctx.bus.publish({"type": "project", "id": project_id})
+    return data
+
+
+@router.get("/{project_id}/clips/{clip_id}/final")
+def get_clip_final(project_id: int, clip_id: int, download: bool = False,
+                   ctx: AppContext = Depends(get_ctx)) -> FileResponse:
+    """The finished 1080x1920 Short. With ?download=1 the browser saves it under its file name."""
+    with ctx.session() as s:
+        clip = s.get(Clip, clip_id)
+        final = (clip.final or {}) if clip and clip.project_id == project_id else {}
+    path = final.get("file")
+    if not path or not Path(path).is_file():
+        raise HTTPException(404, "This clip has not been rendered as a final Short")
+    return FileResponse(path, media_type="video/mp4", filename=final.get("name") if download else None,
+                        headers={"Cache-Control": "no-cache"})
 
 
 @router.patch("/{project_id}/clips/{clip_id}/music")

@@ -178,9 +178,8 @@ As built in Phase 6 (`captions.py`), with two differences from the plan above:
 - Word timings come from the whole-video transcript made in Phase 3 (same
   model, already word-level), moved onto each clip's clock across any removed
   dead air. The model is not run again per clip.
-- Placement does not yet avoid faces: there is no face detection until
-  Phase 8. Captions are kept between the area reserved for the part label
-  (top 18%) and YouTube's own buttons (below 83%).
+- Placement did not avoid faces until Phase 8 (see section 5). Captions are
+  kept between the top 18% and YouTube's own buttons (below 83%).
 
 Lines hold up to the preset's word count, break at pauses, sentence and clause
 ends, removed dead air and the frame width, and stay up 0.3 s after their last
@@ -191,7 +190,7 @@ rule (font size = winAscent + winDescent). Every clip gets a caption report:
 first caption on time, last word shown in full, no line ending early or
 lingering, every word once and in order, clear of the label and button areas,
 fits the width, and the words the speech model was unsure of. The `captions`
-stage renders a 540×960 preview from the original video (centre crop) with
+stage renders a 540×960 preview from the original video (framed as in section 5) with
 the captions burned in; one caption style per project keeps parts consistent,
 and changing it re-renders through the `caption` pipeline without re-cutting.
 
@@ -205,6 +204,57 @@ and changing it re-renders through the `caption` pipeline without re-cutting.
   reaction, split-screen (gameplay top, streamer bottom). The scorer suggests a
   layout per clip; the user can change it in the editor.
 - Reaction zoom: a slow push-in keyed to the scored peak of the clip.
+
+As built in Phase 8 (`framing.py`, `media.render_framed`), with these
+differences from the plan above:
+
+- Faces are found on the original video (decoded at up to 1280 px wide), not
+  the 360p proxy, at 5 samples a second over each clip's ranges. The samples
+  are kept in the project's `framing\` folder, keyed by the video and the
+  ranges, so changing the layout or cutting again with the same ranges never
+  scans twice. Without the model file (`tools\models`, MIT licence) the
+  centre is kept and the clip says why.
+- The facecam is decided once for the whole video, from the samples of every
+  clip together: a cluster of faces that keeps to one off-centre region and is
+  there at least 35% of the time. One clip on its own can be dominated by a
+  face in the game. Its box is then snapped to the overlay's real edges:
+  averaged over about 30 frames, the overlay's border is a straight line that
+  stays put while the picture moves on both sides. A side with no clear line
+  keeps the estimate from the faces.
+- The four layouts are `full` (a 9:16 crop that follows the largest face, or
+  the centre), `split` (streamer 40% on top, filled from inside the facecam;
+  gameplay below, slid up to 15% of the width away from the facecam so it is
+  not shown twice), `facecam_inset` (centre gameplay with the facecam in the
+  top-right corner) and `reaction` (the facecam across the frame over a dimmed,
+  blurred copy, or a tight crop on the speaker). Automatic picks split screen
+  for a facecam and full screen otherwise; a layout that needs a facecam falls
+  back to full screen with the reason. The owner can choose per clip (all
+  parts of a moment together).
+- The camera path is smoothed per shot (median, then Gaussian, then a speed
+  limit of 0.35 crop widths a second) and jumps at scene cuts and at removed
+  dead air rather than gliding across them.
+- The zoom is a 15% push-in starting 0.4 s before the moment's peak, held
+  1.5 s and eased back over 1.2 s.
+- The face positions are carried through the layout into the Short's own
+  pixels. The caption height is the style's own unless that crosses a face in
+  more than 2% of samples; then the first clear height from 70, 62, 54, 46,
+  38, 30% down is used, and the clip says it moved. The PART label is placed
+  where it touches no face during its 2.5 s and misses the caption band.
+
+Rendering is done frame by frame: FFmpeg decodes the clip's ranges to raw
+frames, Python composes each 9:16 frame with OpenCV, and the frames are piped
+into a second FFmpeg that burns in the captions and mixes the clip's sound
+with its music. Previews are 540×960 at up to 30 fps with libx264. The final
+render is 1080×1920 at the source frame rate (up to 60 fps), H.264 through
+Quick Sync (`h264_qsv`, 10 Mb/s) when it works on the machine and libx264
+CRF 18 otherwise, AAC 192 kb/s at 48 kHz. Loudness: the finished mix is
+measured first (stereo, as delivered) and one gain is applied to reach
+−14 LUFS, capped at +15 dB, followed by a limiter at −1.5 dBFS that only
+touches peaks; the speech and the music keep their balance and nothing else is
+processed. The file is probed and measured again and gets a check list (size,
+codecs, length, loudness, true peak). Final files go to the project's
+`final\` folder, named after the project, the clip and the part. Only approved
+clips are rendered.
 
 ## 6. AI providers
 

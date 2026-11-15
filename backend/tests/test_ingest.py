@@ -113,8 +113,8 @@ def test_permitted_link_is_downloaded_and_prepared(client, settings, fake_source
     assert ready["source_meta"]["upload_date"] == "2026-01-02"
     assert ready["has_proxy"] and ready["has_audio_file"] and ready["has_thumbnail"]
     stages = stages_of(client, project["id"])
-    assert [s["status"] for s in stages.values()] == ["done"] * 13
-    assert list(stages)[-4:] == ["moments", "clips", "music", "captions"]
+    assert [s["status"] for s in stages.values()] == ["done"] * 14
+    assert list(stages)[-5:] == ["moments", "clips", "music", "framing", "captions"]
     # each finished stage keeps its closing summary, not a mid-run message
     assert stages["proxy"]["message"].startswith("Preview copy:")
     assert stages["audio"]["message"].startswith("Audio:")
@@ -288,7 +288,7 @@ def test_no_unfinished_files_are_left_behind(client, settings, sample_video):
     names = {p.name for p in settings.project_dir(project["id"]).iterdir()}
     assert names == {
         "thumbnail.jpg", "proxy.mp4", "audio.wav", "rights.json",
-        "audio_signals.json", "video_signals.json", "clips",
+        "audio_signals.json", "video_signals.json", "clips", "framing",
     }
     clip_files = {p.name for p in (settings.project_dir(project["id"]) / "clips").iterdir()}
     assert clip_files == {"clip_01_part1.mp4", "clip_01_part1.ass", "clip_01_part1_vertical.mp4"}, (

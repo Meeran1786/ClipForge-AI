@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import math
 import struct
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, replace
 from functools import lru_cache
 from typing import Any, Literal
 
@@ -308,7 +308,21 @@ def _shouted(line: Line) -> bool:
     return line.text.rstrip("\"'”’)]").endswith("!")
 
 
-def to_ass(lines: list[Line], style: Style) -> str:
+LABEL_STYLE = Style(font="Montserrat Black", size=64, text_color="#FFFFFF", highlight_color="#FFFFFF",
+                    emphasis_color=None, outline=6, shadow=3, position=9, uppercase=True, words_per_line=2,
+                    animation="none", speed=1.0)
+
+
+def label_size(text: str) -> tuple[float, float]:
+    """Width and height in 1080x1920 pixels of the PART label, outline included."""
+    return text_width(text.upper(), LABEL_STYLE) + 2 * LABEL_STYLE.outline, LABEL_STYLE.size * 1.25
+
+
+def part_label_text(part: int, parts: int) -> str:
+    return f"PART {part}/{parts}" if parts > 1 else ""
+
+
+def to_ass(lines: list[Line], style: Style, label: dict[str, Any] | None = None) -> str:
     y = round(FRAME_H * style.position / 100)
     pop = style.animation == "pop"
     grow_ms = max(20, round(70 / style.speed))
@@ -329,6 +343,9 @@ def to_ass(lines: list[Line], style: Style) -> str:
         f"Style: Caption,{style.font},{style.size},{_ass_colour(style.text_color)},{_ass_colour(style.text_color)},"
         f"&H00000000,{_ass_colour('#000000', shadow_alpha)},0,0,0,0,100,100,0,0,1,{style.outline},{style.shadow},"
         f"5,{SIDE_MARGIN},{SIDE_MARGIN},0,1",
+        f"Style: Label,{LABEL_STYLE.font},{LABEL_STYLE.size},&H00FFFFFF,&H00FFFFFF,&H00000000,"
+        f"{_ass_colour('#000000', shadow_alpha)},0,0,0,0,100,100,2,0,1,{LABEL_STYLE.outline},{LABEL_STYLE.shadow},"
+        "5,0,0,0,1",
         "",
         "[Events]",
         "Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text",
@@ -354,6 +371,12 @@ def to_ass(lines: list[Line], style: Style) -> str:
                 tags += (f"\\fscx{scale}\\fscy{scale}\\t(0,{grow_ms},\\fscx104\\fscy104)"
                          f"\\t({grow_ms},{grow_ms + settle_ms},\\fscx100\\fscy100)")
             events.append(f"Dialogue: 0,{_ass_time(start)},{_ass_time(end)},Caption,,0,0,0,,{{{tags}}}{' '.join(parts)}")
+    if label and label.get("text"):
+        until = float(label.get("until", 2.5))
+        events.append(
+            f"Dialogue: 1,{_ass_time(0)},{_ass_time(until)},Label,,0,0,0,,"
+            f"{{\\pos({int(label['x'])},{int(label['y'])})\\fad(150,300)}}{_escape(label['text'].upper())}"
+        )
     return header + "\n" + "\n".join(events) + "\n"
 
 
@@ -443,12 +466,18 @@ def check_lines(lines: list[Line], words: list[CWord], style: Style, clip_length
 
 
 def build_captions(
-    words: list[dict[str, Any]], segments: list[list[float]], clip_length: float, style_in: CaptionStyle
+    words: list[dict[str, Any]], segments: list[list[float]], clip_length: float, style_in: CaptionStyle,
+    position: int | None = None, label: dict[str, Any] | None = None,
 ) -> CaptionResult:
+    """Captions for one clip. `position` overrides the style's height (framing moves it off faces);
+    `label` is the PART label to show over the opening seconds ({text, x, y, until})."""
     style = style_in.resolve()
+    if position is not None:
+        style = replace(style, position=int(position))
     cwords = clip_words(words, segments)
     if not style_in.enabled:
-        return CaptionResult(ass="", lines=[], checks=[CaptionCheck("captions", True, "Captions are turned off.")],
+        return CaptionResult(ass=to_ass([], style, label) if label else "", lines=[],
+                             checks=[CaptionCheck("captions", True, "Captions are turned off.")],
                              word_count=len(cwords))
     lines = build_lines(cwords, style, clip_length)
     flagged = [
@@ -456,7 +485,7 @@ def build_captions(
         for w in cwords if w.p < LOW_CONFIDENCE
     ]
     return CaptionResult(
-        ass=to_ass(lines, style) if lines else "",
+        ass=to_ass(lines, style, label) if lines or label else "",
         lines=[
             {"start": ln.start, "end": ln.end, "text": _shown(ln.text, style),
              "words": [{"s": w.s, "e": w.e, "w": w.text, "p": round(w.p, 2)} for w in ln.words]}

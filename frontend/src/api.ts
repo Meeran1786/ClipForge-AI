@@ -85,6 +85,15 @@ export interface AnalysisSummary {
     enabled: boolean
   } | null
   music: { mode: MusicMode; with_music: number; without_music: number } | null
+  framing: {
+    layout: Layout
+    layouts: Partial<Record<Layout, number>>
+    detector: boolean
+    facecam: { note: string } | null
+    facecam_clips: number
+    face_clips: number
+  } | null
+  final: { made: number; passed: number; encoder: string; folder: string } | null
 }
 
 export interface Moment {
@@ -157,9 +166,49 @@ export interface ProjectOptions {
   caption_style: CaptionStyle
   music_mode: MusicMode
   music_gap_db: number
+  layout: Layout
+  zoom: boolean
+  part_labels: boolean
 }
 
 export type MusicMode = 'auto' | 'off' | 'always'
+export type Layout = 'auto' | 'full' | 'facecam_inset' | 'reaction' | 'split'
+
+export const LAYOUT_LABEL: Record<Layout, string> = {
+  auto: 'Automatic',
+  full: 'Full screen',
+  facecam_inset: 'Gameplay with facecam',
+  reaction: 'Facecam reaction',
+  split: 'Split screen',
+}
+
+export interface ClipFraming {
+  requested: Layout | null
+  layout: Exclude<Layout, 'auto'>
+  layout_label: string
+  reason: string
+  subject: { kind: 'facecam' | 'face' | 'none'; share: number; note: string; facecam: number[] | null }
+  samples: number
+  detector: boolean
+  follow: boolean
+  zoom_at: number | null
+}
+
+export interface ClipFinal {
+  name: string
+  exists: boolean
+  size_bytes: number
+  width: number
+  height: number
+  fps: number
+  duration: number
+  encoder: string
+  layout: string
+  loudness: { lufs: number | null; true_peak: number | null; gain_db?: number | null; target_lufs?: number }
+  checks: { name: string; ok: boolean; detail: string }[]
+  passed: boolean
+  rendered_at: string
+}
 
 export interface Track {
   id: number
@@ -284,7 +333,10 @@ export interface ClipCaptions {
   flagged_words: { t: number; word: string; confidence: number }[]
   lines: CaptionLine[]
   style: CaptionStyle
-  framing: string
+  position?: number
+  moved?: string | null
+  face_share?: number
+  label?: { text: string; where: string } | null
 }
 
 export type DurationMode = 'strict' | 'smart' | 'flexible'
@@ -328,6 +380,8 @@ export interface Clip {
   has_vertical: boolean
   captions: ClipCaptions | null
   music: ClipMusic | null
+  framing: ClipFraming | null
+  final: ClipFinal | null
   review: 'pending' | 'approved' | 'rejected'
   overridden: boolean
 }
@@ -470,6 +524,16 @@ export const api = {
       body: JSON.stringify({ mode, track_id: trackId ?? null }),
     }),
   captionPresets: () => request<CaptionPresets>('/api/captions/presets'),
+  setClipLayout: (projectId: number, clipId: number, layout: Layout) =>
+    request<Clip>(`/api/projects/${projectId}/clips/${clipId}/framing`, {
+      method: 'PATCH',
+      body: JSON.stringify({ layout }),
+    }),
+  renderFinal: (projectId: number, clipIds?: number[]) =>
+    request<Project>(`/api/projects/${projectId}/render-final`, {
+      method: 'POST',
+      body: JSON.stringify({ clip_ids: clipIds ?? null }),
+    }),
   updateCaptions: (projectId: number, style: CaptionStyle) =>
     request<Project>(`/api/projects/${projectId}/captions`, { method: 'PATCH', body: JSON.stringify(style) }),
   weights: () => request<Weights>('/api/settings/weights'),

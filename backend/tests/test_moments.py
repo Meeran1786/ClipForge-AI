@@ -386,7 +386,7 @@ def test_without_an_ai_provider_the_video_is_still_ready(client, sample_video, m
     assert job["status"] == "failed"
     stage = next(s for s in job["stages"] if s["name"] == "moments")
     assert stage["status"] == "failed" and stage["attempts"] == 1
-    assert [s["name"] for s in job["stages"][-3:]] == ["clips", "music", "captions"]
+    assert [s["name"] for s in job["stages"][-4:]] == ["clips", "music", "framing", "captions"]
     assert all(s["status"] == "pending" for s in job["stages"][-3:])
 
     after = client.get(f"/api/projects/{project['id']}").json()

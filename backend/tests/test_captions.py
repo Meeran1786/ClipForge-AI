@@ -295,7 +295,8 @@ def test_every_clip_gets_captions_and_a_vertical_preview(client, settings, sampl
     captions = clip["captions"]
     assert captions["passed"] and captions["word_count"] == 2
     assert [ln["text"] for ln in captions["lines"]] == ["HELLO CHAT."]
-    assert captions["style"]["preset"] == "viral" and "centre crop" in captions["framing"]
+    assert captions["style"]["preset"] == "viral" and captions["position"] == 76 and captions["moved"] is None
+    assert clip["framing"]["layout"] == "full" and clip["framing"]["subject"]["kind"] == "none"
 
     vertical = client.get(f"/api/projects/{project['id']}/clips/{clip['id']}/vertical")
     assert vertical.status_code == 200 and vertical.headers["content-type"] == "video/mp4"

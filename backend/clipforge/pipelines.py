@@ -12,7 +12,9 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
+import math
 import shutil
 import tempfile
 from pathlib import Path
@@ -33,22 +35,42 @@ from .analysis.transcript import (
 from .analysis.video_signals import analyse_video
 from .ingest import PLATFORM_LABELS, IngestRefused, source_for
 from .jobs.engine import Pipeline, StageContext, StageDef
-from .captions import build_captions, clip_words
+from .captions import build_captions, clip_words, label_size, part_label_text
 from .duration import ClipPlan, Context, DurationSettings, Word, plan_moment
+from .framing import (
+    LAYOUT_LABELS,
+    OUT_H,
+    OUT_W,
+    FramePlan,
+    decode_size,
+    drawer,
+    find_facecam,
+    make_detector,
+    place_text,
+    plan_clip,
+    samples_from_json,
+    samples_to_json,
+    scan_faces,
+    snap_to_overlay,
+    spread_frames,
+)
 from .media import (
     MediaError,
     MixSpec,
     extract_audio,
+    hardware_encoder,
     make_proxy,
     make_thumbnail,
+    measure_loudness,
     probe_media,
+    render_framed,
+    replace_audio,
     render_music_stem,
     render_ranges,
-    render_vertical,
     run,
     tool_version,
 )
-from .models import Clip, Job, Moment, Project, Setting, Track, TranscriptSegment
+from .models import Clip, Job, Moment, Project, Setting, Track, TranscriptSegment, iso, utcnow
 from .music import (
     MIN_GAP_DB,
     TrackInfo,
@@ -601,7 +623,7 @@ def plan_project_music(
                 reason = "That track cannot be used" + (": " + " ".join(track.problems) if track else ": it is not in the library.")
                 track = None
             else:
-                reason = f"You chose “{track.title}”."
+                reason = f"You chose â€œ{track.title}â€."
         elif options.music_mode == "off":
             reason = "Music is turned off for this project."
         elif options.music_mode == "auto" and is_plain_conversation(coverage, has_event):
@@ -690,8 +712,224 @@ def _measure_mix(settings, out_dir: Path, stem: str, spec: MixSpec, music: dict,
     }
 
 
+def _render_source(ctx: StageContext) -> tuple[Path, int, int, float, dict]:
+    """The video frames are taken from, its size and frame rate, and the project's media facts.
+
+    The original when it is still there: the 360p copy is too soft for a 9:16 crop.
+    """
+    with ctx.session() as s:
+        project = s.get(Project, ctx.project_id)
+        media = dict(project.media or {})
+        source = Path(project.source_path) if project.source_path else None
+        proxy = Path(project.proxy_path) if project.proxy_path else None
+    if source and source.is_file() and media.get("width") and media.get("height"):
+        return source, int(media["width"]), int(media["height"]), float(media.get("fps") or 30.0), media
+    if proxy and proxy.is_file():
+        info = probe_media(ctx.settings, proxy)
+        return proxy, int(info["width"]), int(info["height"]), float(info.get("fps") or 30.0), media
+    raise MediaError("Neither the original video nor its preview copy is available")
+
+
+def _framing_dir(settings, project_id: int) -> Path:
+    return settings.project_dir(project_id) / "framing"
+
+
+def _faces_file(settings, project_id: int, video: Path, segments: list) -> Path:
+    """Face samples are kept per stretch of video, so cutting again with the same ranges does not rescan."""
+    key = hashlib.sha1(json.dumps([str(video), [[round(a, 3), round(b, 3)] for a, b in segments]]).encode())
+    return _framing_dir(settings, project_id) / f"faces_{key.hexdigest()[:16]}.json"
+
+
+def _clip_cuts(cuts: list[float], segments: list) -> list[float]:
+    """Scene changes inside the clip, and the joins where dead air was cut out, on the clip's clock."""
+    out = [c for c in (to_clip_time(t, segments) for t in cuts) if c is not None]
+    acc = 0.0
+    for a, b in segments[:-1]:
+        acc += b - a
+        out.append(round(acc, 3))
+    return sorted(set(out))
+
+
+def _framing(ctx: StageContext) -> dict:
+    """Find faces in each clip, choose its layout and plan the camera. No AI; the face model runs locally."""
+    only = {int(i) for i in (ctx.params.get("clip_ids") or [])}
+    video, W, H, _fps, _media = _render_source(ctx)
+    with ctx.session() as s:
+        project = s.get(Project, ctx.project_id)
+        options = ProjectOptions(**normalise_options(project.options))
+        moments = {m.id: m.peak for m in s.scalars(select(Moment).where(Moment.project_id == ctx.project_id)).all()}
+        clips = [
+            (c.id, [tuple(seg) for seg in (c.segments or [])], c.moment_id, (c.framing or {}).get("requested"))
+            for c in s.scalars(
+                select(Clip).where(Clip.project_id == ctx.project_id).order_by(Clip.rank, Clip.part, Clip.id)
+            ).all()
+        ]
+    signals = ctx.settings.project_dir(ctx.project_id) / "video_signals.json"
+    cuts = [float(t) for t in json.loads(signals.read_text(encoding="utf-8")).get("cuts", [])] if signals.is_file() else []
+    detector = make_detector(ctx.settings)
+    _framing_dir(ctx.settings, ctx.project_id).mkdir(parents=True, exist_ok=True)
+
+    # Faces first, for every clip (a scan is kept, so only new stretches of video are read) ...
+    clips = [c for c in clips if c[1]]
+    found: dict[int, tuple[Path, list]] = {}
+    for n, (clip_id, segments, _m, _r) in enumerate(clips):
+        ctx.report(0.9 * n / max(len(clips), 1), f"Finding faces in clip {n + 1} of {len(clips)}")
+        faces_path = _faces_file(ctx.settings, ctx.project_id, video, segments)
+        if faces_path.is_file():
+            samples = samples_from_json(json.loads(faces_path.read_text(encoding="utf-8")))
+        elif detector is not None:
+            samples = scan_faces(ctx.settings, detector, video, (W, H), segments, ctx.check)
+            faces_path.write_text(json.dumps(samples_to_json(samples)), encoding="utf-8")
+        else:
+            samples = []
+        found[clip_id] = (faces_path, samples)
+    # ... then the facecam, which stays in one place for the whole video, from all of them together ...
+    facecam = find_facecam([x for _, samples in found.values() for x in samples], W, H)
+    if facecam is not None and facecam.facecam is not None:
+        ctx.report(0.9, "Finding the facecam's edges")
+        frames = spread_frames(ctx.settings, video, (W, H), [seg for c in clips for seg in c[1]])
+        facecam.facecam, sides = snap_to_overlay(frames, facecam.facecam, W, H, facecam.core)
+        if sides:
+            facecam.note += f" Its {', '.join(sides)} edge{'s' if len(sides) > 1 else ''} lined up with the overlay."
+
+    # ... then each clip's layout and camera.
+    todo = [c for c in clips if not only or c[0] in only]
+    for n, (clip_id, segments, moment_id, requested) in enumerate(todo):
+        ctx.report(0.9 + 0.1 * n / max(len(todo), 1), f"Framing clip {n + 1} of {len(todo)}")
+        faces_path, samples = found[clip_id]
+        peak = moments.get(moment_id)
+        anchor = to_clip_time(peak, segments) if peak is not None else None
+        plan, subject, reason = plan_clip(samples, W, H, requested or options.layout, anchor,
+                                          _clip_cuts(cuts, segments), zoom=options.zoom,
+                                          facecam=facecam.facecam if facecam else None,
+                                          video_checked=detector is not None)
+        if detector is None:
+            subject.note = "The face model is not installed (tools\\models), so the centre of the picture is kept."
+        record = {
+            "requested": requested, "layout": plan.layout, "layout_label": LAYOUT_LABELS[plan.layout],
+            "reason": reason, "subject": subject.to_dict(), "plan": plan.to_dict(), "faces_file": faces_path.name,
+            "samples": len(samples), "detector": detector is not None,
+        }
+        with ctx.session() as s:
+            clip = s.get(Clip, clip_id)
+            if clip is not None:
+                clip.framing = record
+                s.commit()
+
+    with ctx.session() as s:
+        rows = [c.framing or {} for c in s.scalars(select(Clip).where(Clip.project_id == ctx.project_id)).all()]
+        layouts: dict[str, int] = {}
+        for r in rows:
+            if r.get("layout"):
+                layouts[r["layout"]] = layouts.get(r["layout"], 0) + 1
+        summary = {"layout": options.layout, "layouts": layouts, "detector": detector is not None,
+                   "facecam": facecam.to_dict() if facecam else None,
+                   "facecam_clips": sum(1 for r in rows if (r.get("subject") or {}).get("kind") == "facecam"),
+                   "face_clips": sum(1 for r in rows if (r.get("subject") or {}).get("kind") == "face")}
+        project = s.get(Project, ctx.project_id)
+        project.analysis = {**(project.analysis or {}), "framing": summary}
+        s.commit()
+    ctx.publish_project()
+    ctx.report(1.0, ", ".join(f"{n} {LAYOUT_LABELS[k].lower()}" for k, n in layouts.items()) or "No clips to frame")
+    return summary
+
+
+def _clip_plan(settings, project_id: int, framing: dict | None, W: int, H: int) -> tuple[FramePlan, list]:
+    """The stored framing of a clip, or a plain centre frame when it has none yet."""
+    if framing and framing.get("plan"):
+        plan = FramePlan.from_dict(framing["plan"])
+        if (plan.src_w, plan.src_h) == (W, H):
+            path = _framing_dir(settings, project_id) / str(framing.get("faces_file") or "")
+            samples = samples_from_json(json.loads(path.read_text(encoding="utf-8"))) if path.is_file() else []
+            return plan, samples
+    return FramePlan("full", W, H, {"t": [0.0], "x": [W / 2], "y": [H / 2], "cuts": []}, zoom=False), []
+
+
+def _render_clip(ctx: StageContext, c: dict, words: list, tracks: dict, options: ProjectOptions,
+                 src: tuple[Path, int, int, float, dict], dest: Path, final: bool,
+                 on_progress=None) -> dict:
+    """Frame, caption and mix one clip into `dest`. Returns what was decided and measured."""
+    video, W, H, src_fps, media = src
+    segments, length = c["segments"], c["duration"]
+    out_dir = dest.parent
+    stem = dest.stem.removesuffix("_vertical")  # clip_01_part1.ass beside clip_01_part1_vertical.mp4
+    plan, samples = _clip_plan(ctx.settings, ctx.project_id, c["framing"], W, H)
+    style_in = options.caption_style
+    style = style_in.resolve()
+    label_text = part_label_text(c["part"], c["parts"]) if options.part_labels else ""
+    placement = place_text(plan, samples, style.position, style.size, style.outline,
+                           (label_text, *label_size(label_text)) if label_text else None)
+    lo, hi = segments[0][0], segments[-1][1]
+    nearby = [w for w in words if float(w["e"]) > lo and float(w["s"]) < hi]
+    result = build_captions(nearby, [list(seg) for seg in segments], length, style_in,
+                            position=placement["caption_position"], label=placement["label"])
+    ass_path = None
+    if result.ass:
+        ass_path = out_dir / f"{stem}.ass"
+        ass_path.write_text(result.ass, encoding="utf-8")
+    speech = [(w.s, w.e) for w in clip_words(nearby, [list(seg) for seg in segments])]
+    spec, music = _prepare_mix(ctx.settings, out_dir, stem, c["music"], tracks, speech, length)
+    has_audio = bool(media.get("has_audio", True))
+    channels = int(media.get("audio_channels") or 2)
+    width = OUT_W if final else 540
+    fps = min(src_fps or 30.0, 60.0 if final else 30.0)
+    size, scale = decode_size(W, H, width)
+    loudness = None
+    try:
+        gain = limit = None
+        if final and (has_audio or spec is not None):
+            before = measure_loudness(ctx.settings, video, segments, has_audio=has_audio, music=spec,
+                                      audio_channels=channels)
+            if before and before.get("lufs") is not None:
+                gain = max(-20.0, min(MAX_BOOST_DB, TARGET_LUFS - before["lufs"]))
+            limit = PEAK_CEILING
+            loudness = {"before_lufs": (before or {}).get("lufs"), "before_true_peak": (before or {}).get("true_peak"),
+                        "gain_db": None if gain is None else round(gain, 2), "target_lufs": TARGET_LUFS}
+        render_framed(ctx.settings, video, dest, segments, drawer(plan, width, scale), size, ass_path,
+                      width=width, fps=fps, has_audio=has_audio, music=spec, audio_channels=channels, final=final,
+                      gain_db=gain, peak_limit=limit, check=ctx.check, on_progress=on_progress)
+        if loudness is not None:
+            # AAC can push a dense, loud mix up to 2 dB over the limiter's ceiling. If the encoded file
+            # peaks too high, encode its sound again with the ceiling lowered by the overshoot.
+            ceiling_db = 20 * math.log10(limit)
+            for _ in range(2):
+                tp = (measure_loudness(ctx.settings, dest, [], whole_file=True) or {}).get("true_peak")
+                if tp is None or tp <= MAX_TRUE_PEAK:
+                    break
+                ceiling_db -= tp - MAX_TRUE_PEAK + 0.2
+                replace_audio(ctx.settings, dest, video, segments, has_audio=has_audio, music=spec,
+                              audio_channels=channels, gain_db=gain, peak_limit=10 ** (ceiling_db / 20))
+            loudness["ceiling_db"] = round(ceiling_db, 2)
+        if spec is not None and music is not None and not final:
+            music = {**music, "measured": _measure_mix(ctx.settings, out_dir, stem, spec, music, speech, length)}
+    finally:
+        if spec is not None and spec.envelope is not None:
+            spec.envelope.unlink(missing_ok=True)
+        if final and ass_path is not None:
+            ass_path.unlink(missing_ok=True)
+    return {"result": result, "music": music, "placement": placement, "plan": plan, "style": style_in,
+            "loudness": loudness, "fps": fps}
+
+
+def _clip_rows(s: Session, project_id: int) -> list[dict]:
+    return [
+        {"id": c.id, "rank": c.rank or 0, "part": c.part or 1, "parts": c.parts or 1, "review": c.review,
+         "segments": [tuple(seg) for seg in (c.segments or [])], "duration": float(c.duration or 0),
+         "music": dict(c.music) if c.music else None, "framing": dict(c.framing) if c.framing else None}
+        for c in s.scalars(select(Clip).where(Clip.project_id == project_id).order_by(Clip.rank, Clip.part, Clip.id)).all()
+    ]
+
+
+def _words(s: Session, project_id: int) -> list[dict]:
+    rows = s.scalars(
+        select(TranscriptSegment).where(TranscriptSegment.project_id == project_id)
+        .order_by(TranscriptSegment.start, TranscriptSegment.id)
+    ).all()
+    return [w for r in rows for w in (r.words or []) if w.get("w")]
+
+
 def _captions(ctx: StageContext) -> dict:
-    """Build captions for each clip, mix in its music, and render the vertical preview. No AI.
+    """Build captions for each clip, mix in its music, and render the framed vertical preview. No AI.
 
     With `clip_ids` in the job's parameters only those clips are rendered again.
     """
@@ -699,63 +937,29 @@ def _captions(ctx: StageContext) -> dict:
     with ctx.session() as s:
         project = s.get(Project, ctx.project_id)
         options = ProjectOptions(**normalise_options(project.options))
-        media = dict(project.media or {})
-        source = Path(project.source_path) if project.source_path else None
-        proxy = Path(project.proxy_path) if project.proxy_path else None
-        clips = [
-            (c.id, c.rank or 0, c.part or 1, [tuple(seg) for seg in (c.segments or [])], float(c.duration or 0),
-             dict(c.music) if c.music else None)
-            for c in s.scalars(
-                select(Clip).where(Clip.project_id == ctx.project_id).order_by(Clip.rank, Clip.part, Clip.id)
-            ).all()
-        ]
-        rows = s.scalars(
-            select(TranscriptSegment)
-            .where(TranscriptSegment.project_id == ctx.project_id)
-            .order_by(TranscriptSegment.start, TranscriptSegment.id)
-        ).all()
-        words = [w for r in rows for w in (r.words or []) if w.get("w")]
+        clips = _clip_rows(s, ctx.project_id)
+        words = _words(s, ctx.project_id)
         tracks = {t.id: t for t in load_track_infos(s)}
-    # Render from the original when it is still there: the 360p copy is too soft for a 9:16 crop.
-    video = source if source and source.is_file() else proxy
-    if video is None or not video.is_file():
-        raise MediaError("Neither the original video nor its preview copy is available")
-    style = options.caption_style
-    has_audio = bool(media.get("has_audio", True))
+    src = _render_source(ctx)
     out_dir = _clip_dir(ctx.settings, ctx.project_id)
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    todo = [c for c in clips if not only or c[0] in only]
-    for n, (clip_id, rank, part, segments, length, music) in enumerate(todo):
+    todo = [c for c in clips if not only or c["id"] in only]
+    for n, c in enumerate(todo):
         ctx.report(n / max(len(todo), 1), f"Rendering clip {n + 1} of {len(todo)}")
-        if not segments or length < 1.0:
+        if not c["segments"] or c["duration"] < 1.0:
             continue
-        lo, hi = segments[0][0], segments[-1][1]
-        nearby = [w for w in words if float(w["e"]) > lo and float(w["s"]) < hi]
-        result = build_captions(nearby, [list(seg) for seg in segments], length, style)
-        stem = f"clip_{rank:02d}_part{part}"
-        ass_path = None
-        if result.ass:
-            ass_path = out_dir / f"{stem}.ass"
-            ass_path.write_text(result.ass, encoding="utf-8")
-        speech = [(w.s, w.e) for w in clip_words(nearby, [list(seg) for seg in segments])]
-        spec, music = _prepare_mix(ctx.settings, out_dir, stem, music, tracks, speech, length)
-        dest = out_dir / f"{stem}_vertical.mp4"
-        try:
-            render_vertical(ctx.settings, video, dest, segments, ass_path, has_audio=has_audio, music=spec,
-                            audio_channels=int(media.get("audio_channels") or 2))
-            if spec is not None and music is not None:
-                music = {**music, "measured": _measure_mix(ctx.settings, out_dir, stem, spec, music, speech, length)}
-        finally:
-            if spec is not None and spec.envelope is not None:
-                spec.envelope.unlink(missing_ok=True)
+        dest = out_dir / f"clip_{c['rank']:02d}_part{c['part']}_vertical.mp4"
+        done = _render_clip(ctx, c, words, tracks, options, src, dest, final=False)
+        result, placement = done["result"], done["placement"]
         with ctx.session() as s:
-            clip = s.get(Clip, clip_id)
+            clip = s.get(Clip, c["id"])
             if clip is not None:
                 clip.vertical = str(dest)
-                clip.music = music
-                clip.captions = {**result.report(), "lines": result.lines,
-                                 "style": style.model_dump(), "framing": "centre crop (Phase 8 adds smart framing)"}
+                clip.music = done["music"]
+                clip.captions = {**result.report(), "lines": result.lines, "style": done["style"].model_dump(),
+                                 "position": placement["caption_position"], "moved": placement["caption_note"],
+                                 "face_share": placement["caption_face_share"], "label": placement["label"]}
                 s.commit()
 
     with ctx.session() as s:  # the summary covers every clip, not just the ones rendered this time
@@ -764,7 +968,7 @@ def _captions(ctx: StageContext) -> dict:
         passed = sum(1 for c in done if (c.captions or {}).get("passed"))
         flagged = sum(len((c.captions or {}).get("flagged_words") or []) for c in done)
         summary = {"made": made, "passed": passed, "flagged_words": flagged,
-                   "preset": style.preset, "enabled": style.enabled}
+                   "preset": options.caption_style.preset, "enabled": options.caption_style.enabled}
         project = s.get(Project, ctx.project_id)
         project.analysis = {**(project.analysis or {}), "captions": summary}
         s.commit()
@@ -775,6 +979,107 @@ def _captions(ctx: StageContext) -> dict:
     if flagged:
         message += f", {flagged} word(s) the speech model was unsure of"
     ctx.report(1.0, message)
+    return summary
+
+
+TARGET_LUFS = -14.0  # YouTube plays Shorts back at about this loudness
+MAX_BOOST_DB = 15.0
+PEAK_CEILING = 10 ** (-2.0 / 20)  # peak ceiling after the gain; leaves room for AAC to stay under -1 dBTP
+MAX_TRUE_PEAK = -1.0  # dBTP in the delivered file
+FINAL_TOLERANCE_LU = 1.0
+
+
+def _safe_name(text: str) -> str:
+    cleaned = "".join(ch if ch.isalnum() or ch in " -_" else " " for ch in text).strip()
+    return "_".join(cleaned.split())[:60] or "clip"
+
+
+def _final(ctx: StageContext) -> dict:
+    """Render each chosen clip as a finished 1080x1920 Short with captions, music and levelled loudness. No AI.
+
+    `clip_ids` in the job's parameters names the clips; without it every approved clip is rendered.
+    """
+    wanted = {int(i) for i in (ctx.params.get("clip_ids") or [])}
+    with ctx.session() as s:
+        project = s.get(Project, ctx.project_id)
+        options = ProjectOptions(**normalise_options(project.options))
+        title = project.title or f"project_{ctx.project_id}"
+        rights = project.rights_status
+        clips = [c for c in _clip_rows(s, ctx.project_id)
+                 if (c["id"] in wanted if wanted else c["review"] == "approved")]
+        words = _words(s, ctx.project_id)
+        tracks = {t.id: t for t in load_track_infos(s)}
+    if not clips:
+        raise MediaError("No clips to render: approve at least one clip first.")
+    src = _render_source(ctx)
+    out_dir = ctx.settings.project_dir(ctx.project_id) / "final"
+    out_dir.mkdir(parents=True, exist_ok=True)
+    encoder = "h264_qsv" if hardware_encoder(ctx.settings) else "libx264"
+
+    made = 0
+    for n, c in enumerate(clips):
+        base = n / len(clips)
+
+        def tick(f: float, base: float = base) -> None:
+            ctx.report(base + f / len(clips), f"Rendering Short {n + 1} of {len(clips)}")
+
+        tick(0.0)
+        if not c["segments"] or c["duration"] < 1.0:
+            continue
+        name = f"{_safe_name(title)}_{c['rank']:02d}" + (f"_part{c['part']}of{c['parts']}" if c["parts"] > 1 else "")
+        dest = out_dir / f"{name}.mp4"
+        done = _render_clip(ctx, c, words, tracks, options, src, dest, final=True, on_progress=tick)
+        info = probe_media(ctx.settings, dest)
+        after = measure_loudness(ctx.settings, dest, [], whole_file=True) if info.get("has_audio") else None
+        loud = {**(done["loudness"] or {}), "lufs": (after or {}).get("lufs"), "true_peak": (after or {}).get("true_peak")}
+        checks = [
+            {"name": "size", "ok": (info["width"], info["height"]) == (OUT_W, OUT_H),
+             "detail": f"{info['width']}x{info['height']}"},
+            {"name": "codecs", "ok": info["video_codec"] == "h264" and info["audio_codec"] in ("aac", None),
+             "detail": f"{info['video_codec']} / {info['audio_codec'] or 'no sound'}"},
+            {"name": "length", "ok": abs((info.get("duration") or 0) - c["duration"]) <= 0.15,
+             "detail": f"{info.get('duration') or 0:.2f} s for a {c['duration']:.2f} s clip"},
+        ]
+        if loud.get("lufs") is not None:
+            # quieter than the target is accepted when it is the peak limit that held it back (a very loud,
+            # dense mix) or the boost limit (a very quiet one); YouTube turns loud Shorts down, never quiet ones up
+            held_back = ((loud.get("ceiling_db") or 0) < 20 * math.log10(PEAK_CEILING) - 0.01
+                         or (loud.get("gain_db") or 0) >= MAX_BOOST_DB)
+            within = abs(loud["lufs"] - TARGET_LUFS) <= FINAL_TOLERANCE_LU
+            ok = within or (held_back and loud["lufs"] < TARGET_LUFS)
+            detail = f"{loud['lufs']:.1f} LUFS (target {TARGET_LUFS:.0f})"
+            if ok and not within:
+                detail += ", held back to keep the peaks under the limit" if (loud.get("gain_db") or 0) < MAX_BOOST_DB \
+                    else f", the most it may be raised is {MAX_BOOST_DB:.0f} dB"
+            checks.append({"name": "loudness", "ok": ok, "detail": detail})
+            checks.append({"name": "true_peak", "ok": (loud.get("true_peak") or -99) <= MAX_TRUE_PEAK,
+                           "detail": f"{loud.get('true_peak')} dBTP"})
+        record = {
+            "file": str(dest), "name": dest.name, "size_bytes": dest.stat().st_size, "width": info["width"],
+            "height": info["height"], "fps": done["fps"], "duration": info.get("duration"), "encoder": encoder,
+            "video_codec": info["video_codec"], "audio_codec": info["audio_codec"], "loudness": loud,
+            "layout": done["plan"].layout, "caption_position": done["placement"]["caption_position"],
+            "label": done["placement"]["label"], "checks": checks, "passed": all(x["ok"] for x in checks),
+            "rights_status": rights, "rendered_at": iso(utcnow()),
+        }
+        made += 1
+        with ctx.session() as s:
+            clip = s.get(Clip, c["id"])
+            if clip is not None:
+                clip.final = record
+                clip.status = "rendered"
+                s.commit()
+        ctx.publish_project()
+
+    with ctx.session() as s:
+        finals = [c.final for c in s.scalars(select(Clip).where(Clip.project_id == ctx.project_id)).all() if c.final]
+        summary = {"made": len(finals), "passed": sum(1 for f in finals if f.get("passed")), "encoder": encoder,
+                   "folder": str(out_dir)}
+        project = s.get(Project, ctx.project_id)
+        project.analysis = {**(project.analysis or {}), "final": summary}
+        s.commit()
+    ctx.publish_project()
+    ctx.report(1.0, f"{made} Short(s) rendered at 1080x1920")
     return summary
 
 
@@ -819,12 +1124,15 @@ def _ingest_finished(s: Session, job: Job) -> None:
             project.status_detail = (
                 f"Clips were not cut: {job.error}. The picked moments are still there. Use Retry to try again."
             )
-        elif failed_stage in ("captions", "music"):
+        elif failed_stage in ("captions", "music", "framing"):
             project.status = "ready"
             project.status_detail = (
-                f"Captions and music were not added: {job.error}. The clips are cut and can be reviewed. "
+                f"The previews were not finished: {job.error}. The clips are cut and can be reviewed. "
                 "Use Retry to try again."
             )
+        elif failed_stage == "final":
+            project.status = "ready"
+            project.status_detail = f"The final Shorts were not rendered: {job.error}. Use Retry to try again."
         else:
             project.status = "failed"
             project.status_detail = job.error
@@ -857,14 +1165,19 @@ _MUSIC = [
     StageDef("music", "Choose music", _music),
 ]
 
-# Rendering is where captions and music are laid on the clip, so it is one stage.
+_FRAME = [
+    StageDef("framing", "Frame the shot", _framing),
+]
+
+# Rendering is where the framing, captions and music are laid on the clip, so it is one stage.
 _CAPTION = [
-    StageDef("captions", "Add captions and music", _captions),
+    StageDef("captions", "Render previews with captions and music", _captions),
 ]
 
 _CUT = [
     StageDef("clips", "Cut the clips", _clips),
     *_MUSIC,
+    *_FRAME,
     *_CAPTION,
 ]
 
@@ -968,6 +1281,11 @@ PIPELINES: dict[str, Pipeline] = {
     "caption": Pipeline(stages=list(_CAPTION), on_finish=_ingest_finished, on_retry=_ingest_retried),
     # changing the music settings chooses music again and re-renders; the cuts stay as they are
     "remix": Pipeline(stages=[*_MUSIC, *_CAPTION], on_finish=_ingest_finished, on_retry=_ingest_retried),
+    # changing the layout or zoom plans the framing again (faces already found are reused) and re-renders
+    "reframe": Pipeline(stages=[*_FRAME, *_CAPTION], on_finish=_ingest_finished, on_retry=_ingest_retried),
+    # the finished 1080x1920 Shorts, for the approved clips or the ones named in the job
+    "final": Pipeline(stages=[StageDef("final", "Render final Shorts", _final)],
+                      on_finish=_ingest_finished, on_retry=_ingest_retried),
     "ingest_url": Pipeline(
         stages=[
             StageDef("metadata", "Look up the video", _metadata, max_attempts=3),

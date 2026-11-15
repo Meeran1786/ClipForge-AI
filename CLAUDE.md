@@ -39,18 +39,20 @@ and what was not done. Never call a feature done because its screen exists.
 | `backend/clipforge/duration.py` | Smart Duration engine: exact clip boundaries and part splitting, no AI |
 | `backend/clipforge/captions.py` | Word-synced captions: lines, styles, ASS output, timing and placement checks |
 | `backend/clipforge/music.py` | Licensed music: licence rules, track analysis, mood matching, beat alignment, ducking envelope |
+| `backend/clipforge/framing.py` | Faces, facecam, layouts, camera path, zoom, keeping text off faces; the frame compositor |
 | `backend/clipforge/rights.py` | Rights record and the download gate |
 | `frontend/src/` | React + TypeScript + Tailwind dashboard |
 | `data/` | Database, project files, speech models (not in git) |
 | `tools/ffmpeg/` | FFmpeg and ffprobe (not in git) |
 | `tools/fonts/` | Caption fonts, SIL Open Font License (not in git; sources in README) |
+| `tools/models/` | YuNet face model, MIT licence (not in git; source in README) |
 
 ## Commands
 
 Run from the repository root (`D:\ClipForge-AI`).
 
 - Tests: `backend\.venv\Scripts\python -m pytest -q` from `backend`
-  (about 355 tests, five to six minutes).
+  (about 390 tests, five to eight minutes).
 - Dashboard build, after any frontend change: `npm run build` in `frontend`.
   The server serves `frontend/dist`; it does not hot-reload.
 - Start the app: `clipforge.cmd` (`--port`, `--no-browser`, `--data-dir`).
@@ -78,6 +80,11 @@ Run from the repository root (`D:\ClipForge-AI`).
 - **The clip's own sound is never processed.** Music is added to it and
   lowered under speech; mono sounds are copied to both channels at unity
   (FFmpeg's default mono-to-stereo conversion cuts 3 dB per channel).
+- **Loudness levelling is one gain on the finished mix** (then a peak-only
+  limiter), measured on the stereo signal as delivered. Never compress, EQ or
+  otherwise reshape the clip's sound to hit the target.
+- **Framing never calls the AI.** Face scans are kept per video and range in
+  the project's `framing\` folder; changing the layout re-plans from them.
 - When measuring audio in a test, compare the same channel of both files:
   FFmpeg's stereo-to-mono downmix adds the channels and reads 3 dB louder.
 - **Database changes** must be new nullable columns: `db.add_missing_columns`

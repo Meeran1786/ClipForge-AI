@@ -1,7 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { type ReactNode, useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
-import { ApiError, api, type Project, type ProjectOptions } from '../api'
+import { ApiError, api, LAYOUT_LABEL, type Project, type ProjectOptions } from '../api'
 import { AnalysisWorkspace } from '../components/AnalysisWorkspace'
 import { describeDuration, MODE_INFO, OptionsForm, optionsError } from '../components/OptionsForm'
 import { Thumb } from '../components/ProjectRow'
@@ -167,6 +167,11 @@ function ClipSettings({ project }: { project: Project }) {
           <Fact label="Music">
             {o.music_mode === 'off' ? 'None' : o.music_mode === 'always' ? 'Always' : 'Automatic'}
             {o.music_mode !== 'off' && ` · ${o.music_gap_db} dB under speech`}
+          </Fact>
+          <Fact label="Framing">
+            {LAYOUT_LABEL[o.layout]}
+            {o.zoom ? ' · zoom on the key moment' : ''}
+            {o.part_labels ? ' · part labels' : ''}
           </Fact>
         </dl>
       )}
@@ -413,11 +418,24 @@ export default function ProjectDetail() {
 
           {canAttach && <AttachFile project={p} />}
 
-          <Section title="Finished Shorts" aside={<Badge tone="warn">Not built yet · Phases 6–9</Badge>}>
-            <Empty title="No finished Shorts yet">
-              The clips above are plain previews of where each cut falls. Captions, vertical framing, music and the
-              final render are built in Phases 6 to 9.
-            </Empty>
+          <Section
+            title="Finished Shorts"
+            aside={p.analysis.final ? <Badge tone={p.analysis.final.passed === p.analysis.final.made ? 'good' : 'bad'}>
+              {p.analysis.final.passed} of {p.analysis.final.made} passed</Badge> : null}
+          >
+            {p.analysis.final?.made ? (
+              <p className="text-sm leading-relaxed text-soft">
+                {p.analysis.final.made} Short(s) rendered at 1080×1920 ({p.analysis.final.encoder === 'h264_qsv'
+                  ? 'Intel Quick Sync' : 'software encoder'}). Download each from the{' '}
+                <Link to={`/editor?project=${p.id}`} className="text-accent hover:underline">Clip editor</Link>; the files
+                are in <span className="break-all font-mono text-xs">{p.analysis.final.folder}</span>.
+              </p>
+            ) : (
+              <Empty title="No finished Shorts yet">
+                Approve the clips you want in the analysis view, then render them at 1080×1920. Titles, descriptions,
+                quality checks and export come in Phase 9.
+              </Empty>
+            )}
           </Section>
         </div>
       </div>
