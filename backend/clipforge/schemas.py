@@ -6,6 +6,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
+from .captions import CaptionStyle
 from .duration import MAX_TARGET, MIN_TARGET, DurationSettings
 from .models import Project, iso
 from .rights import download_blocker
@@ -35,6 +36,9 @@ class ProjectOptions(BaseModel):
     max_parts: int = Field(default=3, ge=2, le=5)
     context: Literal["tight", "balanced", "full"] = "balanced"
     trim_silence: bool = True
+
+    # Phase 6: one caption style per project, so every clip and every part matches
+    caption_style: CaptionStyle = Field(default_factory=CaptionStyle)
 
     @model_validator(mode="before")
     @classmethod
@@ -112,6 +116,7 @@ def project_to_dict(p: Project, *, clip_count: int = 0) -> dict[str, Any]:
             "transcript": transcript or None,
             "moments": analysis.get("moments"),
             "clips": analysis.get("clips"),
+            "captions": analysis.get("captions"),
         },
         "source_meta": p.source_meta,
         "has_proxy": bool(p.proxy_path),

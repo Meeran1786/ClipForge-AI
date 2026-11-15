@@ -412,6 +412,7 @@ def plan_clip(
 
     best: tuple[float, ClipPlan] | None = None
     shortest_complete: float | None = None
+    shortest_complete_plan: ClipPlan | None = None
     core_seconds = max(sentences[core_last].end - sentences[core_first].start, 0.01)
     for j in range(key, latest + 1):
         end_q, end_problems = ending_quality(sentences, j, ctx, core_last)
@@ -433,8 +434,15 @@ def plan_clip(
             # moment is not: what is left is no longer the moment that was picked.
             kept = (min(sentences[j].end, sentences[core_last].end) - max(sentences[i].start, sentences[core_first].start))
             keeps_enough = kept / core_seconds >= MIN_KEPT_SHARE
-            if usable_end and keeps_enough:
-                shortest_complete = length if shortest_complete is None else min(shortest_complete, length)
+            if usable_end and keeps_enough and (shortest_complete is None or length < shortest_complete):
+                shortest_complete = length
+                # Kept as the fallback when nothing fits: if the user approves anyway,
+                # they get the whole moment, never a fragment of it.
+                c_start_q, c_start_notes = start_quality(sentences, i, ctx, core_first)
+                c_report = _report(sentences, i, j, ctx, st, start, end, length, (end - start) - length,
+                                   end_q, end_problems, c_start_q, c_start_notes, core_first, core_last, core_end)
+                if c_report["last_word_fully_inside"]:
+                    shortest_complete_plan = ClipPlan(start, end, ranges, length, False, c_report)
             if length > st.high + 0.05:
                 continue
             start_q, start_notes = start_quality(sentences, i, ctx, core_first)
@@ -469,11 +477,13 @@ def plan_clip(
     else:
         message = "No clean ending was found for this moment within the limit."
         hint = "Try Flexible mode or a longer target."
-    if best is not None:
-        plan = best[1]
-        plan.report["no_fit"] = f"{message} {hint}"
-        plan.report["shortest_complete_seconds"] = shortest_complete
-        return plan
+    # Offer the complete moment, over the limit, rather than the best fragment:
+    # found in testing on real speech, where the "best attempt" was 1.7 s long.
+    fallback = shortest_complete_plan or (best[1] if best is not None else None)
+    if fallback is not None:
+        fallback.report["no_fit"] = f"{message} {hint}"
+        fallback.report["shortest_complete_seconds"] = shortest_complete
+        return fallback
     start, end = _edges(ctx.words, sentences[core_first].i0, sentences[core_last].i1, ctx.duration)
     return ClipPlan(start, end, [(start, end)], round(end - start, 2), False, {
         "requested_seconds": st.target, "actual_seconds": round(end - start, 2), "mode": st.mode,

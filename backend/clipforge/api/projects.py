@@ -16,7 +16,16 @@ from ..media import VIDEO_EXTENSIONS
 from ..models import Clip, Job, Moment, Project, TranscriptSegment
 from ..pipelines import default_link_title, reselect, reset_analysis
 from ..rights import download_blocker, write_rights_file
-from ..schemas import AttachFile, ClipReview, ProjectCreate, ProjectOptions, RightsUpdate, project_to_dict
+from ..captions import CaptionStyle
+from ..schemas import (
+    AttachFile,
+    ClipReview,
+    ProjectCreate,
+    ProjectOptions,
+    RightsUpdate,
+    normalise_options,
+    project_to_dict,
+)
 
 router = APIRouter(prefix="/api/projects", tags=["projects"])
 
@@ -378,9 +387,46 @@ def clip_to_dict(c: Clip) -> dict:
         "valid": bool(c.valid),
         "report": c.report or {},
         "has_preview": bool(c.preview),
+        "has_vertical": bool(c.vertical),
+        "captions": c.captions,
         "review": c.review or "pending",
         "overridden": bool(c.overridden),
     }
+
+
+@router.get("/{project_id}/clips/{clip_id}/vertical")
+def get_clip_vertical(project_id: int, clip_id: int, ctx: AppContext = Depends(get_ctx)) -> FileResponse:
+    """The 9:16 preview with captions burned in."""
+    with ctx.session() as s:
+        clip = s.get(Clip, clip_id)
+        path = clip.vertical if clip and clip.project_id == project_id else None
+    if not path or not Path(path).is_file():
+        raise HTTPException(404, "No captioned preview for this clip")
+    return FileResponse(path, media_type="video/mp4", headers={"Cache-Control": "no-cache"})
+
+
+@router.patch("/{project_id}/captions")
+def update_captions(project_id: int, body: CaptionStyle, ctx: AppContext = Depends(get_ctx)) -> dict:
+    """Change the project's caption style and re-caption every clip. The cuts are not touched; no AI call."""
+    recaption = False
+    with ctx.session() as s:
+        project = s.get(Project, project_id)
+        if project is None:
+            raise HTTPException(404, "Project not found")
+        if _busy(s, project_id):
+            raise HTTPException(409, "This project is still processing. Wait for it to finish, then change captions.")
+        options = normalise_options(project.options)
+        options["caption_style"] = body.model_dump()
+        project.options = options
+        if s.scalar(select(func.count(Clip.id)).where(Clip.project_id == project_id)):
+            project.status, project.status_detail = "processing", None
+            recaption = True
+        s.commit()
+        data = project_to_dict(project)
+    if recaption:
+        ctx.worker.enqueue("caption", project_id=project_id)
+    ctx.bus.publish({"type": "project", "id": project_id})
+    return data
 
 
 @router.get("/{project_id}/clips")

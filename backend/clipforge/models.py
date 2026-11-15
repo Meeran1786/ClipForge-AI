@@ -144,6 +144,9 @@ class Clip(Base):
     valid: Mapped[bool | None] = mapped_column(default=None)  # passed the context checks
     report: Mapped[dict[str, Any] | None] = mapped_column(JSON, default=None)
     preview: Mapped[str | None] = mapped_column(Text, default=None)
+    # Phase 6: vertical 9:16 preview with captions burned in, and the caption lines + checks
+    vertical: Mapped[str | None] = mapped_column(Text, default=None)
+    captions: Mapped[dict[str, Any] | None] = mapped_column(JSON, default=None)
     # pending | approved | rejected   (the user's decision)
     review: Mapped[str | None] = mapped_column(String(20), default="pending")
     overridden: Mapped[bool | None] = mapped_column(default=False)  # approved despite failing a check

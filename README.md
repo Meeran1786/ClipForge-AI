@@ -5,12 +5,14 @@ best moments, cuts them with context, reframes to 9:16, adds word-synced
 captions and optional licensed music, and writes titles and hashtags. Nothing
 is published without approval.
 
-**Status:** Phases 1 to 5 of 10 are built — the app foundation, dashboard,
-video ingestion, whole-video analysis, AI moment picking and clip cutting with
-Smart Duration. It finds the moments worth clipping and cuts each one on whole
-sentences, with a plain preview to review. It does not yet add captions,
-reframe to vertical, add music or render finished Shorts. Everything so far
-has been checked on test videos only, not on real stream footage. See the [roadmap](docs/ROADMAP.md) for what each
+**Status:** Phases 1 to 6 of 10 are built — the app foundation, dashboard,
+video ingestion, whole-video analysis, AI moment picking, clip cutting with
+Smart Duration, and word-synced captions. It finds the moments worth
+clipping, cuts each one on whole sentences, and shows a vertical preview with
+captions burned in. It does not yet frame the shot around faces or action,
+add music, render final 1080×1920 Shorts or publish. Everything so far has
+been checked on test videos and an openly licensed film, not on real stream
+footage. See the [roadmap](docs/ROADMAP.md) for what each
 phase adds and the [architecture](docs/ARCHITECTURE.md) for how it fits
 together.
 
@@ -69,6 +71,15 @@ Options: `--port 9000`, `--no-browser`, `--data-dir <folder>`.
   reason for any difference, a list of checks it passed, and Approve / Reject.
   Changing the duration settings cuts the clips again at once, with no AI
   call.
+- Every clip gets captions timed to the spoken words, with the word being
+  said highlighted. Four styles: Viral Highlight (the look of the reference
+  Short), Bold Emphasis, Minimal Professional and Gaming. The Clip editor
+  changes font, size, colours, outline, shadow, height, words per line and
+  animation speed for the whole project, so connected parts match, and
+  re-renders the previews. Each clip shows whether its captions passed the
+  timing and placement checks, and which words the speech model was unsure
+  of; those are shown as heard, never guessed. The vertical preview is a plain
+  centre crop until Phase 8.
 - Live, stage-by-stage progress for background jobs, with cancel and retry.
   A job interrupted by closing or killing the app continues from the first
   unfinished stage when the app starts again.
@@ -88,6 +99,10 @@ FFmpeg. After cloning:
 3. `backend\.venv\Scripts\python -m pip install -e backend`
 4. In `frontend`: `npm install`, then `npm run build`
 5. Put `ffmpeg.exe` and `ffprobe.exe` in `tools\ffmpeg\`
+6. Put the caption fonts in `tools\fonts\`: `Montserrat-ExtraBold.ttf` and
+   `Montserrat-Black.ttf` (github.com/JulietaUla/Montserrat), `Anton-Regular.ttf`
+   and `Poppins-SemiBold.ttf` (github.com/google/fonts, `ofl/`). All are under
+   the SIL Open Font License. Settings shows whether all four are found.
 
 ## Layout
 

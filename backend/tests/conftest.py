@@ -179,6 +179,7 @@ def settings(tmp_path: Path) -> Settings:
         _env_file=None,
         data_dir=tmp_path / "data",
         ffmpeg_dir=REPO_ROOT / "tools" / "ffmpeg",
+        fonts_dir=REPO_ROOT / "tools" / "fonts",
         frontend_dist=tmp_path / "no-dist",
     )
     s.ensure_dirs()

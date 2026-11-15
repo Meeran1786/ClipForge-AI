@@ -9,9 +9,11 @@ import sys
 from functools import lru_cache
 
 from fastapi import APIRouter, Depends, HTTPException
+from fastapi.responses import FileResponse
 from sqlalchemy import func, select
 
 from .. import __version__
+from ..captions import FONTS, PRESET_LABELS, PRESETS
 from ..context import AppContext, get_ctx
 from ..jobs.engine import job_to_dict
 from ..media import VIDEO_EXTENSIONS, tool_version
@@ -45,6 +47,8 @@ def system_info(ctx: AppContext = Depends(get_ctx)) -> dict:
         "os": f"{platform.system()} {platform.release()}",
         "ffmpeg": _version_of(s.ffmpeg),
         "ffprobe": _version_of(s.ffprobe),
+        "fonts_installed": sum((s.fonts_dir / f).is_file() for f in FONTS.values()),
+        "fonts_total": len(FONTS),
         "data_dir": str(s.data_dir),
         "disk_free_gb": round(usage.free / 1024**3, 1),
         "disk_total_gb": round(usage.total / 1024**3, 1),
@@ -141,6 +145,25 @@ def put_weights(body: dict[str, float], ctx: AppContext = Depends(get_ctx)) -> d
     for project_id in changed:
         ctx.bus.publish({"type": "project", "id": project_id})
     return {"weights": weights, "defaults": DEFAULT_WEIGHTS, "meaning": SUBSCORE_MEANING}
+
+
+@router.get("/captions/presets")
+def caption_presets() -> dict:
+    return {
+        "presets": [{"name": name, "label": PRESET_LABELS[name], **values} for name, values in PRESETS.items()],
+        "fonts": [{"name": name, "file": file} for name, file in FONTS.items()],
+    }
+
+
+@router.get("/fonts/{name}")
+def font_file(name: str, ctx: AppContext = Depends(get_ctx)) -> FileResponse:
+    """The caption fonts, so the dashboard can show a style sample in the real typeface."""
+    if name not in FONTS.values():
+        raise HTTPException(404, "Unknown font")
+    path = ctx.settings.fonts_dir / name
+    if not path.is_file():
+        raise HTTPException(404, "Font not installed (expected in tools\\fonts)")
+    return FileResponse(path, media_type="font/ttf", headers={"Cache-Control": "max-age=86400"})
 
 
 _PICKER = r"""

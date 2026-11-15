@@ -45,6 +45,8 @@ class Settings(BaseSettings):
     speech_detection: str = "sensitive"
     transcript_chunk_seconds: int = 600
 
+    fonts_dir: Path = REPO_ROOT / "tools" / "fonts"
+
     @property
     def models_dir(self) -> Path:
         return self.data_dir / "cache" / "models"

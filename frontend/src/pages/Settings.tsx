@@ -216,6 +216,15 @@ export default function Settings() {
               <Row label="Speech-to-text">
                 On this computer <span className="text-faint">· {s.speech_model} model</span>
               </Row>
+              <Row label="Caption fonts">
+                {s.fonts_installed === s.fonts_total ? (
+                  <Badge tone="good">{s.fonts_installed} installed</Badge>
+                ) : (
+                  <Badge tone="bad">
+                    {s.fonts_installed} of {s.fonts_total} installed
+                  </Badge>
+                )}
+              </Row>
             </dl>
             {lowDisk && (
               <p className="mt-3 text-xs text-accent">
@@ -227,7 +236,6 @@ export default function Settings() {
           <Section title="Not built yet">
             <ul className="space-y-2 text-sm text-soft">
               <li>Choosing the AI provider and models here (set in the .env file for now)</li>
-              <li>Caption presets — Phase 6</li>
               <li>Music library and licences — Phase 7</li>
               <li>Export settings — Phase 9</li>
             </ul>

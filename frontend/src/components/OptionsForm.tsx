@@ -1,5 +1,6 @@
-import type { ContextLevel, DurationMode, ProjectOptions } from '../api'
+import type { CaptionPreset, ContextLevel, DurationMode, ProjectOptions } from '../api'
 import { CATEGORY_LABEL } from '../format'
+import { EMPTY_OVERRIDES } from './CaptionStyleForm'
 
 export const DURATION_PRESETS = [15, 20, 30, 35, 45, 60, 90]
 const MIN_TARGET = 10
@@ -313,6 +314,31 @@ export function OptionsForm({
 
       <div className="grid gap-5 sm:grid-cols-3">
         <NumberField id="max-clips" label="Maximum clips" min={1} max={50} value={value.max_clips} onChange={(n) => set('max_clips', n)} />
+        <div className="sm:col-span-2">
+          <label className="label" htmlFor="caption-preset">
+            Caption style
+          </label>
+          <select
+            id="caption-preset"
+            className="input"
+            value={value.caption_style.enabled ? value.caption_style.preset : 'off'}
+            onChange={(e) =>
+              set(
+                'caption_style',
+                e.target.value === 'off'
+                  ? { ...value.caption_style, enabled: false }
+                  : { ...value.caption_style, ...EMPTY_OVERRIDES, enabled: true, preset: e.target.value as CaptionPreset },
+              )
+            }
+          >
+            <option value="viral">Viral Highlight (the reference look)</option>
+            <option value="bold">Bold Emphasis</option>
+            <option value="minimal">Minimal Professional</option>
+            <option value="gaming">Gaming</option>
+            <option value="off">No captions</option>
+          </select>
+          <p className="hint">Fine-tune colours, size and position later in the Clip editor.</p>
+        </div>
       </div>
 
       <div>

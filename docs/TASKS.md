@@ -19,7 +19,7 @@ reaction or an event.
 | --- | --- | --- |
 | Target duration, modes, ending detection, part splitting | Phase 5 | Built |
 | Smart Duration panel on New Project, project settings, Settings | Phase 5 | Built |
-| Caption start/end checks, part labels clear of captions | Phase 6 | Not built |
+| Caption start/end checks, part labels clear of captions | Phase 6 | Built (label itself: Phase 8) |
 | Part labels placed off faces and gameplay, consistent layout across parts | Phase 8 | Not built |
 | Consistent music and audio levels across parts | Phases 7 and 8 | Not built |
 | Per-part titles and hashtags | Phase 9 | Not built |
@@ -84,19 +84,24 @@ Part splitting (Part 1, Part 2, …)
       the part before.
 - [x] Part numbering; no repeated dialogue, no missing dialogue, no overlap:
       parts are consecutive runs of whole sentences.
-- [ ] Same layout, caption style, audio levels and music across parts
-      (Phases 6–8).
+- [~] Same caption style across parts: the style is set once per project,
+      so every clip and every part uses it (Phase 6). Same layout, audio
+      levels and music across parts are Phases 7–8.
 - [ ] Optional on-screen PART 1 / PART 2 / PART 3 label that covers neither
       faces nor gameplay (Phase 8).
 - [ ] Titles and hashtags per part (Phase 9).
 
-Caption and video sync (Phase 6, except where noted)
+Caption and video sync (Phase 6)
 - [x] Engine side: the clip always runs past the end of its last word and
       starts before its first, so a caption for either can be shown in full;
       a word timed past the end of the video is flagged.
-- [ ] First caption starts at the right time.
-- [ ] No caption ends before the speaker or lingers after the dialogue.
-- [ ] Captions never overlap the part label.
+- [x] First caption starts at the right time (checked per clip, to one frame).
+- [x] No caption ends before the speaker or lingers more than 0.3 s after
+      the dialogue; a line gives way to the next one instead of overlapping.
+- [x] The last caption is never cut off by the end of the clip.
+- [~] Captions never overlap the part label: every clip is checked to keep
+      its captions out of the top 18% of the frame, which is reserved for the
+      label. The label itself is drawn in Phase 8.
 
 Pre-export validation
 - [x] Report per clip: requested duration, actual duration, first spoken
@@ -115,8 +120,9 @@ Interface
       difference, a preview, and Approve / Reject.
 - [~] "Adjust the result" is done by changing the settings, which re-cuts at
       once without the AI. Dragging a clip's own start or end is not built.
-- [ ] The same panel inside the Clip Editor (the Clip Editor itself is
-      Phases 6–8).
+- [ ] The Smart Duration panel inside the Clip Editor. The Clip Editor now
+      exists (Phase 6) but holds caption style only; duration is still set in
+      the project's Clip settings.
 
 Test cases (automated, in `backend/tests/test_duration.py`)
 - [x] 1. Target 35 s, sentence finishes at 37 s.
@@ -126,9 +132,9 @@ Test cases (automated, in `backend/tests/test_duration.py`)
 - [x] 5. A 105 s moment split into connected parts.
 - [x] 6. A speaker pauses before finishing a sentence.
 - [x] 7. Several speakers talking at once.
-- [~] 8. A caption overlapping the end of the video: the engine side is
-      tested (clip never runs past the video, last word fully inside).
-      Caption drawing is Phase 6.
+- [x] 8. A caption overlapping the end of the video: the clip never runs
+      past the video, the last word is fully inside, and the last caption's
+      hold is shortened so it ends with the clip (`test_captions.py`).
 - [x] 9. A natural stopping point before the target.
 - [x] 10. No valid standalone moment fits Strict mode.
 

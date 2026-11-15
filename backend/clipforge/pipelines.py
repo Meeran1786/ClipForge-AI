@@ -33,6 +33,7 @@ from .analysis.transcript import (
 from .analysis.video_signals import analyse_video
 from .ingest import PLATFORM_LABELS, IngestRefused, source_for
 from .jobs.engine import Pipeline, StageContext, StageDef
+from .captions import build_captions
 from .duration import ClipPlan, Context, DurationSettings, Word, plan_moment
 from .media import (
     MediaError,
@@ -41,6 +42,7 @@ from .media import (
     make_thumbnail,
     probe_media,
     render_ranges,
+    render_vertical,
     run,
     tool_version,
 )
@@ -514,6 +516,78 @@ def _clips(ctx: StageContext) -> dict:
     return summary
 
 
+def _captions(ctx: StageContext) -> dict:
+    """Build word-synced captions for every clip and render a vertical preview with them burned in. No AI."""
+    with ctx.session() as s:
+        project = s.get(Project, ctx.project_id)
+        options = ProjectOptions(**normalise_options(project.options))
+        media = dict(project.media or {})
+        source = Path(project.source_path) if project.source_path else None
+        proxy = Path(project.proxy_path) if project.proxy_path else None
+        clips = [
+            (c.id, c.rank or 0, c.part or 1, [tuple(seg) for seg in (c.segments or [])], float(c.duration or 0))
+            for c in s.scalars(
+                select(Clip).where(Clip.project_id == ctx.project_id).order_by(Clip.rank, Clip.part, Clip.id)
+            ).all()
+        ]
+        rows = s.scalars(
+            select(TranscriptSegment)
+            .where(TranscriptSegment.project_id == ctx.project_id)
+            .order_by(TranscriptSegment.start, TranscriptSegment.id)
+        ).all()
+        words = [w for r in rows for w in (r.words or []) if w.get("w")]
+    # Render from the original when it is still there: the 360p copy is too soft for a 9:16 crop.
+    video = source if source and source.is_file() else proxy
+    if video is None or not video.is_file():
+        raise MediaError("Neither the original video nor its preview copy is available")
+    style = options.caption_style
+    has_audio = bool(media.get("has_audio", True))
+    out_dir = _clip_dir(ctx.settings, ctx.project_id)
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    made = passed = flagged = 0
+    for n, (clip_id, rank, part, segments, length) in enumerate(clips):
+        ctx.report(n / max(len(clips), 1), f"Captioning clip {n + 1} of {len(clips)}")
+        if not segments or length < 1.0:
+            continue
+        lo, hi = segments[0][0], segments[-1][1]
+        nearby = [w for w in words if float(w["e"]) > lo and float(w["s"]) < hi]
+        result = build_captions(nearby, [list(seg) for seg in segments], length, style)
+        stem = f"clip_{rank:02d}_part{part}"
+        ass_path = None
+        if result.ass:
+            ass_path = out_dir / f"{stem}.ass"
+            ass_path.write_text(result.ass, encoding="utf-8")
+        dest = out_dir / f"{stem}_vertical.mp4"
+        render_vertical(ctx.settings, video, dest, segments, ass_path, has_audio=has_audio)
+        made += 1
+        passed += result.passed
+        flagged += len(result.flagged)
+        with ctx.session() as s:
+            clip = s.get(Clip, clip_id)
+            if clip is not None:
+                clip.vertical = str(dest)
+                clip.captions = {**result.report(), "lines": result.lines,
+                                 "style": style.model_dump(), "framing": "centre crop (Phase 8 adds smart framing)"}
+                s.commit()
+    summary = {
+        "made": made, "passed": passed, "flagged_words": flagged,
+        "preset": style.preset, "enabled": style.enabled,
+    }
+    with ctx.session() as s:
+        project = s.get(Project, ctx.project_id)
+        project.analysis = {**(project.analysis or {}), "captions": summary}
+        s.commit()
+    ctx.publish_project()
+    message = f"{made} clip(s) captioned"
+    if made - passed:
+        message += f", {made - passed} with a caption check to look at"
+    if flagged:
+        message += f", {flagged} word(s) the speech model was unsure of"
+    ctx.report(1.0, message)
+    return summary
+
+
 def reselect(s: Session, project: Project) -> None:
     """Re-rank and re-mark a project's moments after its settings or the weights change. No AI call."""
     rows = list(s.scalars(select(Moment).where(Moment.project_id == project.id)).all())
@@ -555,6 +629,11 @@ def _ingest_finished(s: Session, job: Job) -> None:
             project.status_detail = (
                 f"Clips were not cut: {job.error}. The picked moments are still there. Use Retry to try again."
             )
+        elif failed_stage == "captions":
+            project.status = "ready"
+            project.status_detail = (
+                f"Captions were not added: {job.error}. The clips are cut and can be reviewed. Use Retry to try again."
+            )
         else:
             project.status = "failed"
             project.status_detail = job.error
@@ -583,8 +662,13 @@ _ANALYSE = [
     StageDef("transcript", "Transcribe speech", _transcript),
 ]
 
+_CAPTION = [
+    StageDef("captions", "Add captions", _captions),
+]
+
 _CUT = [
     StageDef("clips", "Cut the clips", _clips),
+    *_CAPTION,
 ]
 
 _DETECT = [
@@ -683,6 +767,8 @@ PIPELINES: dict[str, Pipeline] = {
     "detect": Pipeline(stages=list(_DETECT), on_finish=_ingest_finished, on_retry=_ingest_retried),
     # cutting needs no AI, so it is re-run on its own whenever the duration settings change
     "cut": Pipeline(stages=list(_CUT), on_finish=_ingest_finished, on_retry=_ingest_retried),
+    # restyling captions re-renders the previews only; the cuts stay as they are
+    "caption": Pipeline(stages=list(_CAPTION), on_finish=_ingest_finished, on_retry=_ingest_retried),
     "ingest_url": Pipeline(
         stages=[
             StageDef("metadata", "Look up the video", _metadata, max_attempts=3),

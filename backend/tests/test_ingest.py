@@ -113,8 +113,8 @@ def test_permitted_link_is_downloaded_and_prepared(client, settings, fake_source
     assert ready["source_meta"]["upload_date"] == "2026-01-02"
     assert ready["has_proxy"] and ready["has_audio_file"] and ready["has_thumbnail"]
     stages = stages_of(client, project["id"])
-    assert [s["status"] for s in stages.values()] == ["done"] * 11
-    assert list(stages)[-2:] == ["moments", "clips"]
+    assert [s["status"] for s in stages.values()] == ["done"] * 12
+    assert list(stages)[-3:] == ["moments", "clips", "captions"]
     # each finished stage keeps its closing summary, not a mid-run message
     assert stages["proxy"]["message"].startswith("Preview copy:")
     assert stages["audio"]["message"].startswith("Audio:")
@@ -291,7 +291,9 @@ def test_no_unfinished_files_are_left_behind(client, settings, sample_video):
         "audio_signals.json", "video_signals.json", "clips",
     }
     clip_files = {p.name for p in (settings.project_dir(project["id"]) / "clips").iterdir()}
-    assert clip_files == {"clip_01_part1.mp4"}, "one finished preview, no half-written files"
+    assert clip_files == {"clip_01_part1.mp4", "clip_01_part1.ass", "clip_01_part1_vertical.mp4"}, (
+        "one plain preview, its captions and the captioned vertical preview; no half-written files"
+    )
 
 
 # ---- error wording ----------------------------------------------------------

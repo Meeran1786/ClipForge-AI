@@ -1,4 +1,5 @@
 import { useMutation, useQueryClient } from '@tanstack/react-query'
+import { Link } from 'react-router-dom'
 import { api, type Clip, type Project } from '../api'
 import { CATEGORY_LABEL, duration as clock } from '../format'
 import { Badge, Empty, ErrorNote, Section } from '../ui'
@@ -31,9 +32,17 @@ function ClipCard({ project, clip }: { project: Project; clip: Clip }) {
         !clip.valid ? 'border-bad/30 bg-bad/5' : clip.review === 'approved' ? 'border-good/40 bg-good/5' : 'border-line'
       }`}
     >
-      <div className="grid gap-4 md:grid-cols-[240px_1fr]">
+      <div className={`grid gap-4 ${clip.has_vertical ? 'md:grid-cols-[180px_1fr]' : 'md:grid-cols-[240px_1fr]'}`}>
         <div>
-          {clip.has_preview ? (
+          {clip.has_vertical ? (
+            <video
+              className="aspect-[9/16] w-full rounded-md bg-black"
+              controls
+              preload="none"
+              poster={project.has_thumbnail ? `/api/projects/${project.id}/thumbnail` : undefined}
+              src={`/api/projects/${project.id}/clips/${clip.id}/vertical?v=${encodeURIComponent(project.updated_at)}`}
+            />
+          ) : clip.has_preview ? (
             <video
               className="aspect-video w-full rounded-md bg-black"
               controls
@@ -45,7 +54,11 @@ function ClipCard({ project, clip }: { project: Project; clip: Clip }) {
               No preview
             </div>
           )}
-          <p className="mt-1.5 text-[11px] text-faint">Plain preview. Vertical framing and captions come later.</p>
+          <p className="mt-1.5 text-[11px] text-faint">
+            {clip.has_vertical
+              ? 'With captions. Framing is a centre crop until Phase 8.'
+              : 'Plain preview. Captions are added after cutting.'}
+          </p>
         </div>
 
         <div className="min-w-0">
@@ -98,6 +111,18 @@ function ClipCard({ project, clip }: { project: Project; clip: Clip }) {
             {multi && <Check ok={r.repeats_dialogue === false && r.skips_dialogue === false} label="Continues cleanly" />}
           </div>
 
+          {clip.captions && clip.captions.word_count > 0 && (
+            <p className={`mt-2 text-xs ${clip.captions.passed ? 'text-soft' : 'text-bad'}`}>
+              Captions: {clip.captions.line_count} lines
+              {clip.captions.passed
+                ? ', all timing and placement checks passed'
+                : `, ${clip.captions.checks.filter((c) => !c.ok).length} check(s) failed`}
+              {clip.captions.flagged_words.length > 0 &&
+                ` · ${clip.captions.flagged_words.length} word(s) the speech model was unsure of`}
+              .
+            </p>
+          )}
+
           <p className="mt-2 text-xs text-faint">
             {r.first_word != null && (
               <>
@@ -143,6 +168,14 @@ function ClipCard({ project, clip }: { project: Project; clip: Clip }) {
               >
                 Undo
               </button>
+            )}
+            {clip.has_vertical && (
+              <Link
+                to={`/editor?project=${project.id}&clip=${clip.id}`}
+                className="ml-auto text-xs text-soft hover:text-ink"
+              >
+                Edit captions
+              </Link>
             )}
             {review.isError && <span className="text-xs text-bad">{review.error.message}</span>}
           </div>

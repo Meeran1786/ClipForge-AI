@@ -173,6 +173,28 @@ Implementation:
   collides, the caption moves to the next free band.
 - Fonts bundled are open-licensed only (Montserrat, Poppins, Anton — SIL OFL).
 
+As built in Phase 6 (`captions.py`), with two differences from the plan above:
+
+- Word timings come from the whole-video transcript made in Phase 3 (same
+  model, already word-level), moved onto each clip's clock across any removed
+  dead air. The model is not run again per clip.
+- Placement does not yet avoid faces: there is no face detection until
+  Phase 8. Captions are kept between the area reserved for the part label
+  (top 18%) and YouTube's own buttons (below 83%).
+
+Lines hold up to the preset's word count, break at pauses, sentence and clause
+ends, removed dead air and the frame width, and stay up 0.3 s after their last
+word unless the next line starts sooner. Each word is one ASS event with only
+that word coloured, so the highlight changes exactly on the word timings.
+Line widths are measured from the font files using the renderer's own sizing
+rule (font size = winAscent + winDescent). Every clip gets a caption report:
+first caption on time, last word shown in full, no line ending early or
+lingering, every word once and in order, clear of the label and button areas,
+fits the width, and the words the speech model was unsure of. The `captions`
+stage renders a 540×960 preview from the original video (centre crop) with
+the captions burned in; one caption style per project keeps parts consistent,
+and changing it re-renders through the `caption` pipeline without re-cutting.
+
 ## 5. Framing and layouts
 
 - Face detection with OpenCV's YuNet model on the proxy at 2–5 fps; positions

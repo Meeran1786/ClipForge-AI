@@ -252,12 +252,21 @@ clip with an unrelated line from after a pause; a missing full stop before a
 long silence glued two beats into one sentence (clip started 17 s early); a
 part opened on a two-word afterthought; wrong wording on parts.
 
+Added 2026-11-16, on real speech: Tears of Steel (CC BY 3.0, Blender
+Foundation), with the real speech model and the real AI pick, re-cut under the
+same 30 combinations. 204 clips checked against 306 real word timings by the
+independent script: 176 cut cleanly, 28 refused with a reason, 44 moments told
+in parts, no problems. One fault found and fixed: when nothing complete fitted,
+the clip offered for "Approve anyway" was the best fragment (1.7 s on one
+moment whose payoff came after 47 s without dialogue); it is now the shortest
+complete version of the whole moment, over the limit, with the reason.
+
 Not done:
 
-- Tested on one synthetic spoken video only. No real stream footage, and the
-  Phase 4 gate (owner rating picks on three own videos) is still open.
-- Part labels, per-part titles and hashtags, caption sync checks and the Clip
-  Editor panel belong to Phases 6, 8 and 9 and are not built.
+- No real stream or gaming footage yet, and the Phase 4 gate (owner rating
+  picks on three own videos) is still open.
+- Part labels and per-part titles and hashtags belong to Phases 8 and 9.
+  Caption sync checks were built in Phase 6.
 - "Several speakers at once" is judged from overlapping word timings only;
   there is no speaker identification.
 - No manual adjustment of a clip's start or end yet (approve or reject only).
@@ -274,7 +283,7 @@ request.
 Gate: no clip starts or ends mid-word across twenty generated clips; no two
 clips show the same event.
 
-## Phase 6 — Captions
+## Phase 6 — Captions — done 2026-11-16
 
 - Word alignment with local Whisper on clip audio.
 - ASS caption generator with the four presets; Viral Highlight matches the
@@ -283,6 +292,56 @@ clips show the same event.
 
 Gate: side-by-side with the reference Short; highlight lands on the spoken
 word in frame-stepped checks; low-confidence words are flagged, not invented.
+
+What was built: `captions.py` (words from the Phase 3 transcript moved onto
+each clip's clock, short lines, one ASS event per word with the spoken word
+coloured, four presets with overrides, timing and placement checks, exact line
+widths from the font files); a `captions` stage after cutting that renders a
+540×960 preview with captions burned in; one caption style per project, so all
+parts match; a working Clip Editor (style controls, live sample in the real
+font, re-caption all clips, caption checks, caption lines with unsure words
+marked); captioned previews on each clip card; the caption style choice on New
+Project and in the defaults. Fonts (Montserrat ExtraBold and Black, Anton,
+Poppins SemiBold; SIL Open Font License) are in `tools\fonts`.
+
+One change from the plan: the speech model is not run again on each clip. The
+word timings from the whole-video transcript are already word-level and from
+the same model, so re-running would add minutes per clip for no gain.
+
+Gate results, on Tears of Steel (real dialogue, CC BY 3.0), 10 clips:
+
+- All 10 clips passed every timing and placement check.
+- Frame by frame: for each of 237 words, the frame shown while it is said was
+  taken from the rendered preview and the yellow highlight located. It was on
+  the right word in 237 of 237. In 29 of 29 pauses between lines, nothing was
+  on screen.
+- Side by side with the reference Short: same look (heavy white capitals,
+  black outline, spoken word yellow, about three quarters down); ours is
+  slightly larger and a few percent lower, both adjustable.
+- Unsure words: the speech model's confidence is shown, not acted on. Words
+  under 0.5 agreed with the film's own published captions only 31–43% of the
+  time, against 91% for confident words, so the flag points at the words most
+  likely to be wrong. 26 of 242 words were flagged.
+- 251 automated tests pass, including one that renders real frames and checks
+  the highlight moves from word to word.
+
+Faults found and fixed: line widths were worked out from the font's letter
+size, but the renderer sizes text by the font's full line height, so
+Montserrat drew 36% narrower than predicted (found by the frame check: 27
+highlights sat nearer the centre than expected); lines now break and are
+checked against the true width.
+
+Not done, and limits:
+
+- Five words of 40–80 ms were highlighted for under two frames, too briefly
+  to see. Their timing was left as heard rather than stretched.
+- Framing is a plain centre crop, which can leave a speaker out of shot. Face
+  and action framing, and keeping captions off faces, is Phase 8.
+- The Part 1 / Part 2 label is not drawn yet (Phase 8); captions are kept out
+  of the area reserved for it.
+- Captions cannot be edited word by word; an unsure word can only be heard
+  and the clip rejected.
+- One language per video (whatever the speech model detected).
 
 ## Phase 7 — Music
 
@@ -327,8 +386,9 @@ scoring, thumbnail and title testing, more caption languages.
 ## Dependencies (all on D:)
 
 Installed and verified 2026-11-14: the backend virtualenv with every Python
-package below, the frontend packages, and FFmpeg/ffprobe. Still to fetch when
-their phase starts: the Whisper model and the caption fonts.
+package below, the frontend packages, and FFmpeg/ffprobe. The speech models
+(Phase 3, `data\cache\models`) and the caption fonts (Phase 6, `tools\fonts`)
+have since been fetched.
 
 | Item | Phase | Notes |
 | --- | --- | --- |
@@ -338,8 +398,8 @@ their phase starts: the Whisper model and the caption fonts.
 | yt-dlp | 2 | `tools\` |
 | numpy, librosa, opencv-python-headless, scenedetect | 3 | |
 | Gemini SDK or CLI bridge | 3 | needs API key or working CLI sign-in |
-| faster-whisper (small model, ~500 MB) | 6 | model cache on D: |
-| Fonts: Montserrat, Poppins, Anton | 6 | SIL Open Font License |
+| faster-whisper (small model, ~500 MB) | 3 | model cache on D: |
+| Fonts: Montserrat, Poppins, Anton | 6 | SIL Open Font License; `tools\fonts`, licences alongside |
 
 ## Needed from the owner
 

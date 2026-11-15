@@ -204,9 +204,33 @@ def test_05_without_splitting_a_clip_that_would_lose_most_of_the_story_is_refuse
     words = long_story()
     plan = one(Context(words, duration=700), 500.0, 605.0, 578.0, target=45, mode="smart")
     assert not plan.valid
-    assert "more than half of the moment would be left out" in plan.report["problems"]
     assert "No complete version of this moment fits" in plan.report["no_fit"]
     assert "part splitting" in plan.report["no_fit"]
+    # what is offered instead is the whole story, over the limit, never a shortened fragment
+    assert plan.duration == pytest.approx(plan.report["shortest_complete_seconds"])
+    assert plan.duration > 49.5 and plan.report["last_word"] == "server."
+
+
+def test_a_refused_moment_offers_the_whole_moment_not_a_fragment():
+    """Found on real speech (Tears of Steel): the payoff came after 47 s with no dialogue, nothing
+    fitted, and the clip offered for 'Approve anyway' was a 1.7 s fragment."""
+    words = script(
+        (224.0, "Nothing to worry about.", 2.0),
+        (230.0, "You love her.", 1.5),
+        (233.0, "Be tender to her.", 1.5),
+        (236.0, "Remind her what love is.", 2.0),
+        (239.0, "Memory", 0.5),
+        (286.0, "override in progress.", 1.5),
+        (290.0, "You are a jerk, Tom!", 1.5),
+    )
+    plans = plan_moment(Context(words, duration=600), 224.0, 287.5, 286.5,
+                        DurationSettings(target=30, mode="smart", split=True, max_parts=3, trim_silence=False))
+    [plan] = plans
+    assert not plan.valid and "could not be split" in plan.report["no_fit"]
+    assert plan.duration > 33, "the offered clip is the complete moment, over the limit"
+    # the shortest complete version: from "Memory" (kept with its payoff) to "progress."
+    assert plan.report["last_word"] == "progress." and plan.start <= 239.0 and plan.duration >= 48
+    assert plan.duration == pytest.approx(plan.report["shortest_complete_seconds"])
 
 
 def test_05_a_moment_that_fits_is_not_split_even_when_splitting_is_on():

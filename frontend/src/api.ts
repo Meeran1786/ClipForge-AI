@@ -77,6 +77,13 @@ export interface AnalysisSummary {
     mode: DurationMode
     split: boolean
   } | null
+  captions: {
+    made: number
+    passed: number
+    flagged_words: number
+    preset: CaptionPreset
+    enabled: boolean
+  } | null
 }
 
 export interface Moment {
@@ -146,6 +153,64 @@ export interface ProjectOptions {
   max_parts: number
   context: ContextLevel
   trim_silence: boolean
+  caption_style: CaptionStyle
+}
+
+export type CaptionPreset = 'viral' | 'bold' | 'minimal' | 'gaming'
+
+export interface CaptionStyle {
+  preset: CaptionPreset
+  font: string | null
+  size: number | null
+  text_color: string | null
+  highlight_color: string | null
+  outline: number | null
+  shadow: number | null
+  position: number | null
+  uppercase: boolean | null
+  words_per_line: number | null
+  speed: number | null
+  enabled: boolean
+}
+
+export interface PresetValues {
+  name: CaptionPreset
+  label: string
+  font: string
+  size: number
+  text_color: string
+  highlight_color: string
+  emphasis_color: string | null
+  outline: number
+  shadow: number
+  position: number
+  uppercase: boolean
+  words_per_line: number
+  animation: 'pop' | 'none'
+  speed: number
+}
+
+export interface CaptionPresets {
+  presets: PresetValues[]
+  fonts: { name: string; file: string }[]
+}
+
+export interface CaptionLine {
+  start: number
+  end: number
+  text: string
+  words: { s: number; e: number; w: string; p: number }[]
+}
+
+export interface ClipCaptions {
+  passed: boolean
+  word_count: number
+  line_count: number
+  checks: { name: string; ok: boolean; detail: string }[]
+  flagged_words: { t: number; word: string; confidence: number }[]
+  lines: CaptionLine[]
+  style: CaptionStyle
+  framing: string
 }
 
 export type DurationMode = 'strict' | 'smart' | 'flexible'
@@ -186,6 +251,8 @@ export interface Clip {
   valid: boolean
   report: ClipReport
   has_preview: boolean
+  has_vertical: boolean
+  captions: ClipCaptions | null
   review: 'pending' | 'approved' | 'rejected'
   overridden: boolean
 }
@@ -234,6 +301,8 @@ export interface SystemInfo {
   disk_free_gb: number
   disk_total_gb: number
   gemini_route: string
+  fonts_installed: number
+  fonts_total: number
   ai_models: string
   speech_model: string
   categories: string[]
@@ -312,6 +381,9 @@ export const api = {
       method: 'PATCH',
       body: JSON.stringify({ review, override }),
     }),
+  captionPresets: () => request<CaptionPresets>('/api/captions/presets'),
+  updateCaptions: (projectId: number, style: CaptionStyle) =>
+    request<Project>(`/api/projects/${projectId}/captions`, { method: 'PATCH', body: JSON.stringify(style) }),
   weights: () => request<Weights>('/api/settings/weights'),
   saveWeights: (w: Record<string, number>) =>
     request<Weights>('/api/settings/weights', { method: 'PUT', body: JSON.stringify(w) }),

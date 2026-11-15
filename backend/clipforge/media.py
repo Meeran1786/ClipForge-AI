@@ -225,6 +225,73 @@ def render_ranges(
     return _finish_part(part, dest)
 
 
+def _filter_path(path: Path) -> str:
+    """A path written so FFmpeg's filter parser reads it whole (drive colons escaped)."""
+    return "'" + path.resolve().as_posix().replace(":", "\\:").replace("'", "\\'") + "'"
+
+
+def render_vertical(
+    settings: Settings,
+    src: Path,
+    dest: Path,
+    ranges: list[tuple[float, float]],
+    ass: Path | None,
+    has_audio: bool = True,
+    width: int = 540,
+) -> Path:
+    """A 9:16 preview of the given ranges with captions burned in.
+
+    Framing is a plain centre crop for now; following faces and the action is
+    Phase 8. The captions are laid out for 1080x1920 and scaled with the frame.
+    """
+    if not settings.ffmpeg:
+        raise MediaError("ffmpeg is not installed (expected in tools\\ffmpeg)")
+    ranges = [(float(a), float(b)) for a, b in ranges if b - a > 0.02]
+    if not ranges:
+        raise MediaError("Nothing to render: the clip has no length")
+    height = width * 16 // 9
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    part = dest.with_name(dest.stem + ".part" + dest.suffix)
+
+    chains, labels = [], ""
+    for n, (a, b) in enumerate(ranges):
+        chains.append(f"[0:v]trim=start={a:.3f}:end={b:.3f},setpts=PTS-STARTPTS[v{n}]")
+        labels += f"[v{n}]"
+        if has_audio:
+            chains.append(f"[0:a]atrim=start={a:.3f}:end={b:.3f},asetpts=PTS-STARTPTS[a{n}]")
+            labels += f"[a{n}]"
+    chains.append(f"{labels}concat=n={len(ranges)}:v=1:a={1 if has_audio else 0}[joined]" + ("[a]" if has_audio else ""))
+    look = (
+        "crop=w='min(iw,ih*9/16)':h='min(ih,iw*16/9)',"
+        f"scale={width}:{height}:flags=lanczos,setsar=1"
+    )
+    if ass is not None:
+        look += f",ass={_filter_path(ass)}:fontsdir={_filter_path(settings.fonts_dir)}"
+    chains.append(f"[joined]{look}[v]")
+    cmd = [
+        settings.ffmpeg, "-hide_banner", "-loglevel", "error", "-y", "-i", str(src),
+        "-filter_complex", ";".join(chains), "-map", "[v]",
+    ]
+    if has_audio:
+        cmd += ["-map", "[a]", "-c:a", "aac", "-b:a", "128k"]
+    cmd += ["-c:v", "libx264", "-preset", "veryfast", "-crf", "23", "-pix_fmt", "yuv420p",
+            "-movflags", "+faststart", str(part)]
+    run(cmd, timeout=900)
+    return _finish_part(part, dest)
+
+
+def grab_frame(settings: Settings, video: Path, at: float, dest: Path) -> Path:
+    """One frame at an exact time (decoded, not the nearest keyframe)."""
+    if not settings.ffmpeg:
+        raise MediaError("ffmpeg is not installed (expected in tools\\ffmpeg)")
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    run([settings.ffmpeg, "-hide_banner", "-loglevel", "error", "-y", "-i", str(video),
+         "-ss", f"{max(0.0, at):.3f}", "-frames:v", "1", "-q:v", "3", str(dest)], timeout=120)
+    if not dest.is_file():
+        raise MediaError("Could not read a frame")
+    return dest
+
+
 def make_thumbnail(settings: Settings, src: Path, dest: Path, at_seconds: float) -> Path:
     if not settings.ffmpeg:
         raise MediaError("ffmpeg is not installed (expected in tools\\ffmpeg)")
