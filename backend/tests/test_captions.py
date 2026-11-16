@@ -233,6 +233,28 @@ def yellow_mask(img):
     return (r > 200) & (g > 170) & (b < 110)
 
 
+@pytest.mark.parametrize("preset", ["viral", "bold", "minimal", "gaming"])
+def test_captions_sit_near_the_middle_clear_of_youtubes_own_controls(preset):
+    """The owner's choice (2026-11-17): captions just below the middle, never under YouTube's channel name
+    and title at the bottom, nor its like, comment and share buttons down the right-hand side."""
+    style = CaptionStyle(preset=preset).resolve()
+    assert style.position == 60
+    words = [w(0.1 + i * 0.4, 0.4 + i * 0.4, t) for i, t in
+             enumerate("unbelievable absolutely extraordinary performance tonight everybody".split())]
+    result = build_captions(words, [[0.0, 4.0]], 4.0, CaptionStyle(preset=preset))
+    assert result.passed, [c for c in result.checks if not c.ok]
+    resolved = CaptionStyle(preset=preset).resolve()
+    for line in result.lines:
+        drawn = cap.text_width(line["text"], resolved) * cap.line_fit(
+            cap.Line([cap.CWord(x["s"], x["e"], x["w"]) for x in line["words"]], line["start"], line["end"]), resolved)
+        right_edge = 1080 / 2 + drawn / 2
+        assert right_edge <= 1080 - cap.RIGHT_BUTTONS + 0.5, f"{line['text']!r} reaches the button column"
+    if preset == "gaming":  # a word wider than the centre is drawn smaller, and the ASS says so
+        assert "\\fscx" in result.ass
+    bottom = 1920 * style.position / 100 + style.size * 0.7
+    assert bottom <= 1920 * cap.PLATFORM_UI_ZONE, "clear of the channel name and title"
+
+
 def test_burned_in_highlight_moves_from_word_to_word(settings, tmp_path):
     # a plain dark frame, so the only yellow pixels are the caption's
     video = tmp_path / "plain.mp4"
@@ -251,7 +273,7 @@ def test_burned_in_highlight_moves_from_word_to_word(settings, tmp_path):
     info = probe_media(settings, out)
     assert (info["width"], info["height"]) == (540, 960) and info["has_audio"]
 
-    caption_row = int(960 * 0.76)
+    caption_row = int(960 * cap.DEFAULT_POSITION / 100)
     band = slice(caption_row - 60, caption_row + 60)
     before = yellow_mask(frame_at(settings, out, 0.1))
     first = yellow_mask(frame_at(settings, out, 0.7))
@@ -295,7 +317,8 @@ def test_every_clip_gets_captions_and_a_vertical_preview(client, settings, sampl
     captions = clip["captions"]
     assert captions["passed"] and captions["word_count"] == 2
     assert [ln["text"] for ln in captions["lines"]] == ["HELLO CHAT."]
-    assert captions["style"]["preset"] == "viral" and captions["position"] == 76 and captions["moved"] is None
+    assert captions["style"]["preset"] == "viral" and captions["moved"] is None
+    assert captions["position"] == cap.DEFAULT_POSITION == 60
     assert clip["framing"]["layout"] == "full" and clip["framing"]["subject"]["kind"] == "none"
 
     vertical = client.get(f"/api/projects/{project['id']}/clips/{clip['id']}/vertical")

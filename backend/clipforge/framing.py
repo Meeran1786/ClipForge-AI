@@ -24,6 +24,7 @@ from typing import Any, Callable
 
 import numpy as np
 
+from .captions import SIDE_MARGIN as CAPTION_SIDE
 from .config import Settings
 from .media import read_frames
 
@@ -57,7 +58,9 @@ JUMP_SHARE = 0.5  # the subject moving this many crop-widths between samples is 
 MIN_FOLLOW_SHARE = 0.05  # faces shorter than this share of the height (people in the background) are not followed
 
 LABEL_SECONDS = 2.5
-CAPTION_CANDIDATES = (70, 62, 54, 46, 38, 30)  # tried in this order after the style's own height
+# Tried in this order after the style's own height when a face is in the way: close to the middle
+# first, never into YouTube's title and channel name at the bottom.
+CAPTION_CANDIDATES = (54, 66, 48, 70, 42, 36, 30)
 FACE_OVERLAP = 0.15  # share of a face that may be covered before it counts as covered
 COVER_LIMIT = 0.0  # share of sampled frames a caption may cover a face in (if no height is clear, the least is used)
 TEXT_MARGIN = 0.10  # faces are given this much room (share of their size, each side) when placing text
@@ -702,10 +705,10 @@ def drawer(plan: FramePlan, out_w: int, src_scale: float) -> Callable[[np.ndarra
 
 
 def caption_band(position: float, size: float, outline: float = 0.0) -> Box:
-    """The strip a one-line caption at this height covers, with its outline."""
+    """The strip a one-line caption at this height covers, with its outline (lines stay in the centre width)."""
     half = size * 0.7 + outline
     y = OUT_H * position / 100
-    return Box(40, y - half, OUT_W - 80, 2 * half)
+    return Box(CAPTION_SIDE, y - half, OUT_W - 2 * CAPTION_SIDE, 2 * half)
 
 
 def covered_share(band: Box, faces_by_sample: list[list[Box]], allowed: float = FACE_OVERLAP) -> float:
@@ -783,12 +786,13 @@ def choose_tag_position(
 ) -> tuple[float, float, str, float]:
     """Where the creator credit sits for the whole clip: a corner clear of faces, captions and the label.
 
-    The top corners first; YouTube's own title and buttons cover the bottom and the right-hand side lower down.
+    Always on the left: YouTube's search and menu icons sit in the top-right corner, its like, comment and
+    share buttons down the right-hand side, and its channel name and title along the bottom.
     """
     candidates = [
         ("top left", 48 + text_w / 2, OUT_H * 0.045),
-        ("top right", OUT_W - 48 - text_w / 2, OUT_H * 0.045),
-        ("left, above the title", 48 + text_w / 2, OUT_H * 0.775),
+        ("left, above the title", 48 + text_w / 2, OUT_H * 0.74),
+        ("left, middle", 48 + text_w / 2, OUT_H * 0.47),
     ]
     best = None
     for name, x, y in candidates:

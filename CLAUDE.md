@@ -96,6 +96,11 @@ Run from the repository root (`D:\ClipForge-AI`).
   `fake_google` stand-in; `no_real_google` blocks everything else.
 - **Captions show what was heard.** Never correct, add or drop a word; flag
   unsure ones.
+- **Captions sit at 60% down and inside the centre 740 px** (owner's choice,
+  2026-11-17), clear of YouTube's right-hand buttons and the title below 78%.
+  These limits live in `captions.py` (`RIGHT_BUTTONS`, `SAFE_WIDTH`,
+  `PLATFORM_UI_ZONE`, `DEFAULT_POSITION`); do not move captions back towards
+  the bottom.
 - **No track without a complete licence record is ever used.** The check is
   in `music.licence_problems` and is applied when importing, when choosing
   (automatic or by hand) and when rendering. Never add a path around it, and

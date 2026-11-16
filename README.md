@@ -82,6 +82,13 @@ Options: `--port 9000`, `--no-browser`, `--data-dir <folder>`.
   re-renders the previews. Each clip shows whether its captions passed the
   timing and placement checks, and which words the speech model was unsure
   of; those are shown as heard, never guessed.
+- Captions sit just below the middle of the Short (60% down) by default, in
+  the centre of the width. They stay clear of YouTube's own controls: the
+  like, comment and share buttons on the right, and the channel name and title
+  at the bottom. A word too long for that space is drawn smaller rather than
+  running into the buttons. If a face is in the way, captions move to the
+  nearest clear height. In tight close-ups a face can go undetected, so a
+  caption may then cross it.
 - Background music from a library of tracks you are licensed to use
   (Settings → Music library). A track is added with its mood and licence
   details (where it came from, the licence, a link or note, and a credit line

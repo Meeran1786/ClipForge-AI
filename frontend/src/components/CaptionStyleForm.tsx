@@ -2,6 +2,9 @@ import { useQuery } from '@tanstack/react-query'
 import type { ReactNode } from 'react'
 import { api, type CaptionPreset, type CaptionStyle, type PresetValues } from '../api'
 
+/** px of the 1080 width YouTube's like/comment/share column takes; captions keep this much room on both sides. */
+const RIGHT_BUTTONS = 170
+
 export const EMPTY_OVERRIDES = {
   font: null,
   size: null,
@@ -59,13 +62,21 @@ export function StyleSample({ values, enabled }: { values: PresetValues; enabled
       <div className="absolute inset-x-0 top-0 border-b border-dashed border-white/20" style={{ height: '18%' }}>
         <span className="absolute left-2 top-1 text-[10px] text-white/40">Part label area</span>
       </div>
-      <div className="absolute inset-x-0 bottom-0 border-t border-dashed border-white/20" style={{ height: '17%' }}>
-        <span className="absolute bottom-1 left-2 text-[10px] text-white/40">YouTube’s buttons and title</span>
+      <div className="absolute inset-x-0 bottom-0 border-t border-dashed border-white/20" style={{ height: '22%' }}>
+        <span className="absolute bottom-1 left-2 text-[10px] text-white/40">YouTube’s channel name and title</span>
+      </div>
+      <div
+        className="absolute right-0 border-l border-dashed border-white/20"
+        style={{ top: '40%', height: '52%', width: `${(RIGHT_BUTTONS / 1080) * 100}%` }}
+      >
+        <span className="absolute left-1 top-1 text-[9px] leading-tight text-white/40">Like · comment · share</span>
       </div>
       {enabled ? (
         <div
-          className="absolute inset-x-0 -translate-y-1/2 whitespace-nowrap text-center leading-none"
+          className="absolute -translate-y-1/2 whitespace-nowrap text-center leading-none"
           style={{
+            left: `${(RIGHT_BUTTONS / 1080) * 100}%`,
+            right: `${(RIGHT_BUTTONS / 1080) * 100}%`,
             top: `${values.position}%`,
             fontFamily: `"CF ${values.font}", sans-serif`,
             fontSize: values.size * scale,
@@ -234,7 +245,7 @@ export function CaptionStyleForm({
             <Slider id="cap-shadow" value={resolved.shadow} min={0} max={10} onChange={(n) => set('shadow', n)} />
           </Row>
           <Row label="Height" htmlFor="cap-pos">
-            <Slider id="cap-pos" value={resolved.position} min={45} max={83} suffix="%" onChange={(n) => set('position', n)} />
+            <Slider id="cap-pos" value={resolved.position} min={30} max={72} suffix="%" onChange={(n) => set('position', n)} />
           </Row>
           <Row label="Words per line" htmlFor="cap-words">
             <Slider id="cap-words" value={resolved.words_per_line} min={1} max={8} onChange={(n) => set('words_per_line', n)} />

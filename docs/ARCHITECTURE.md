@@ -178,8 +178,19 @@ As built in Phase 6 (`captions.py`), with two differences from the plan above:
 - Word timings come from the whole-video transcript made in Phase 3 (same
   model, already word-level), moved onto each clip's clock across any removed
   dead air. The model is not run again per clip.
-- Placement did not avoid faces until Phase 8 (see section 5). Captions are
-  kept between the top 18% and YouTube's own buttons (below 83%).
+- Placement did not avoid faces until Phase 8 (see section 5).
+- Since 2026-11-17 (the owner's choice), every preset puts captions at 60%
+  down, just below the middle. Captions must stay clear of YouTube's own
+  controls drawn over a Short:
+  - lines are limited to the centre 740 of 1080 px, leaving 170 px each side,
+    so the like/comment/share column on the right is never reached; a line
+    with one word too long for that is drawn smaller;
+  - captions end above 78%, where the channel name and title begin;
+  - captions stay below the top 18%, kept for the PART label.
+
+  The on-screen credit only uses spots on the left, away from the top-right
+  icons. Before this change captions sat at 72–80% and could run nearly edge
+  to edge.
 
 Lines hold up to the preset's word count, break at pauses, sentence and clause
 ends, removed dead air and the frame width, and stay up 0.3 s after their last
@@ -236,9 +247,10 @@ differences from the plan above:
 - The zoom is a 15% push-in starting 0.4 s before the moment's peak, held
   1.5 s and eased back over 1.2 s.
 - The face positions are carried through the layout into the Short's own
-  pixels. The caption height is the style's own unless that crosses a face in
-  more than 2% of samples; then the first clear height from 70, 62, 54, 46,
-  38, 30% down is used, and the clip says it moved. The PART label is placed
+  pixels. The caption height is the style's own unless that crosses a face
+  (no tolerance since Phase 9); then the first clear height from 54, 66, 48,
+  70, 42, 36, 30% down is used (nearest the middle first, since 2026-11-17),
+  and the clip says it moved. The PART label is placed
   where it touches no face during its 2.5 s and misses the caption band.
 
 Rendering is done frame by frame: FFmpeg decodes the clip's ranges to raw

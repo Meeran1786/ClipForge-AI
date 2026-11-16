@@ -30,8 +30,14 @@ HOLD = 0.3  # a line stays up this long after its last word, unless the next lin
 LINE_BREAK_PAUSE = 0.6  # a pause this long starts a new line
 LOW_CONFIDENCE = 0.5  # words the speech model was less sure of than this are flagged
 LABEL_ZONE = 0.18  # top share of the frame kept clear for the Part 1 / Part 2 label (Phase 8)
-PLATFORM_UI_ZONE = 0.83  # below this share of the height, YouTube's own buttons and title sit
-SIDE_MARGIN = 60
+# YouTube draws its own controls over a Short: the channel name, title and sound line along the bottom
+# (from about 78% down), and the like, dislike, comment, share and remix buttons in a column down the
+# right-hand side (the right 15% of the width, from about 40% to 92% down).
+PLATFORM_UI_ZONE = 0.78  # captions end above this share of the height
+RIGHT_BUTTONS = 170  # px of the 1080 width taken by YouTube's button column, with a gap
+SIDE_MARGIN = RIGHT_BUTTONS  # captions are centred, so the same room is kept on both sides
+SAFE_WIDTH = 1080 - 2 * SIDE_MARGIN  # 740 px of line width, clear of the buttons
+DEFAULT_POSITION = 60  # just below the middle: away from the title at the bottom and the faces at the top
 FRAME_SECONDS = 1 / 30
 
 FONTS = {
@@ -66,18 +72,19 @@ class Style:
 
 PRESETS: dict[str, dict[str, Any]] = {
     # Matches the reference Short: heavy capitals, white with a thick black outline,
-    # two to four words a line, the spoken word in yellow, about three quarters down.
+    # two to four words a line, the spoken word in yellow. All presets sit just below the
+    # middle (the owner's choice, 2026-11-17), clear of YouTube's title and side buttons.
     "viral": dict(font="Montserrat ExtraBold", size=88, text_color="#FFFFFF", highlight_color="#FFE11A",
-                  emphasis_color=None, outline=7, shadow=3, position=76, uppercase=True,
+                  emphasis_color=None, outline=7, shadow=3, position=DEFAULT_POSITION, uppercase=True,
                   words_per_line=3, animation="pop", speed=1.0),
     "bold": dict(font="Anton", size=116, text_color="#FFFFFF", highlight_color="#5BFF4A",
-                 emphasis_color=None, outline=8, shadow=4, position=72, uppercase=True,
+                 emphasis_color=None, outline=8, shadow=4, position=DEFAULT_POSITION, uppercase=True,
                  words_per_line=2, animation="pop", speed=1.0),
     "minimal": dict(font="Poppins SemiBold", size=62, text_color="#FFFFFF", highlight_color="#FFFFFF",
-                    emphasis_color=None, outline=0, shadow=3, position=80, uppercase=False,
+                    emphasis_color=None, outline=0, shadow=3, position=DEFAULT_POSITION, uppercase=False,
                     words_per_line=6, animation="none", speed=1.0),
     "gaming": dict(font="Montserrat Black", size=92, text_color="#FFFFFF", highlight_color="#FFE11A",
-                   emphasis_color="#FF3B30", outline=7, shadow=3, position=74, uppercase=True,
+                   emphasis_color="#FF3B30", outline=7, shadow=3, position=DEFAULT_POSITION, uppercase=True,
                    words_per_line=3, animation="pop", speed=1.3),
 }
 PRESET_LABELS = {
@@ -95,7 +102,8 @@ class CaptionStyle(BaseModel):
     highlight_color: str | None = Field(default=None, pattern=r"^#[0-9A-Fa-f]{6}$")
     outline: int | None = Field(default=None, ge=0, le=14)
     shadow: int | None = Field(default=None, ge=0, le=10)
-    position: int | None = Field(default=None, ge=45, le=83)
+    # 30–83 so every saved project still loads; the checks flag anything that reaches YouTube's title
+    position: int | None = Field(default=None, ge=30, le=83)
     uppercase: bool | None = None
     words_per_line: int | None = Field(default=None, ge=1, le=8)
     speed: float | None = Field(default=None, ge=0.5, le=2.5)
@@ -254,7 +262,7 @@ def build_lines(words: list[CWord], style: Style, clip_length: float) -> list[Li
     speaker pauses, a sentence or clause ends, or the clip jumps over removed
     dead air.
     """
-    room = FRAME_W - 2 * SIDE_MARGIN
+    room = SAFE_WIDTH
     lines: list[list[CWord]] = []
     for w in words:
         current = lines[-1] if lines else None
@@ -339,6 +347,12 @@ def tag_size(text: str) -> tuple[float, float]:
     return text_width(text, TAG_STYLE) + 2 * TAG_STYLE.outline, TAG_STYLE.size * 1.25
 
 
+def line_fit(line: Line, style: Style) -> float:
+    """How much to shrink a line so it stays inside the safe centre width (1.0 = not at all)."""
+    width = text_width(_shown(line.text, style), style)
+    return min(1.0, SAFE_WIDTH / width) if width > 0 else 1.0
+
+
 def to_ass(lines: list[Line], style: Style, label: dict[str, Any] | None = None,
            tag: dict[str, Any] | None = None, length: float | None = None) -> str:
     y = round(FRAME_H * style.position / 100)
@@ -374,6 +388,7 @@ def to_ass(lines: list[Line], style: Style, label: dict[str, Any] | None = None,
     events: list[str] = []
     for line in lines:
         hot = (style.emphasis_color if style.emphasis_color and _shouted(line) else style.highlight_color)
+        fit = line_fit(line, style)  # a line wider than the safe centre (one long word) is drawn smaller
         for k, w in enumerate(line.words):
             start = line.start if k == 0 else w.s
             end = line.words[k + 1].s if k + 1 < len(line.words) else line.end
@@ -387,10 +402,16 @@ def to_ass(lines: list[Line], style: Style, label: dict[str, Any] | None = None,
                 else:
                     parts.append(word)
             tags = f"\\pos({FRAME_W // 2},{y})\\q2"
+
+            def sc(percent: int) -> int:
+                return round(percent * fit)
+
             if pop and k == 0:
                 scale = 112 if hot == style.highlight_color else 120
-                tags += (f"\\fscx{scale}\\fscy{scale}\\t(0,{grow_ms},\\fscx104\\fscy104)"
-                         f"\\t({grow_ms},{grow_ms + settle_ms},\\fscx100\\fscy100)")
+                tags += (f"\\fscx{sc(scale)}\\fscy{sc(scale)}\\t(0,{grow_ms},\\fscx{sc(104)}\\fscy{sc(104)})"
+                         f"\\t({grow_ms},{grow_ms + settle_ms},\\fscx{sc(100)}\\fscy{sc(100)})")
+            elif fit < 1:
+                tags += f"\\fscx{sc(100)}\\fscy{sc(100)}"
             events.append(f"Dialogue: 0,{_ass_time(start)},{_ass_time(end)},Caption,,0,0,0,,{{{tags}}}{' '.join(parts)}")
     if label and label.get("text"):
         until = float(label.get("until", 2.5))
@@ -477,15 +498,19 @@ def check_lines(lines: list[Line], words: list[CWord], style: Style, clip_length
     ))
     checks.append(CaptionCheck(
         "clear_of_platform_buttons", bottom <= FRAME_H * PLATFORM_UI_ZONE,
-        f"Caption bottom at {bottom / FRAME_H:.0%} of the height; YouTube's own title and buttons start "
+        f"Caption bottom at {bottom / FRAME_H:.0%} of the height; YouTube's channel name and title start "
         f"around {PLATFORM_UI_ZONE:.0%}.",
     ))
     widest = max(lines, key=lambda ln: text_width(_shown(ln.text, style), style))
     width = text_width(_shown(widest.text, style), style)
+    drawn = width * line_fit(widest, style)
+    shrunk = sum(1 for ln in lines if line_fit(ln, style) < 1)
     measured = _metrics(FONTS.get(style.font, "")) is not None
     checks.append(CaptionCheck(
-        "fits_the_width", width <= FRAME_W - 2 * SIDE_MARGIN or len(widest.words) == 1,
-        f"Widest line {width:.0f} px of {FRAME_W - 2 * SIDE_MARGIN} px available"
+        "fits_the_width", drawn <= SAFE_WIDTH + 0.5,
+        f"Widest line {drawn:.0f} px of the {SAFE_WIDTH} px in the centre, clear of YouTube's like, comment and "
+        "share buttons on the right"
+        + (f"; {shrunk} line(s) with one long word drawn smaller to fit" if shrunk else "")
         + ("" if measured else " (estimated: font file not found)") + ".",
     ))
     return checks

@@ -61,8 +61,12 @@ upload is done; the rest is not started.
 
 ## How it has been verified
 
-- 457 automated tests, using stand-ins for the platforms, the speech model,
+- 461 automated tests, using stand-ins for the platforms, the speech model,
   the AI and Google.
+- Caption placement (2026-11-17): every gate Short re-rendered with captions
+  at 54–66% down and lines no wider than 704 of the 740 px allowed. Frames
+  checked against YouTube's control zones (right-hand buttons, title at the
+  bottom): no overlap.
 - The service refused to upload a real Short from a video with unconfirmed
   rights (HTTP 409, nothing sent).
 - Quality checks proven on deliberately broken copies of a real Short: black
