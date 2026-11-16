@@ -80,4 +80,28 @@ export const CATEGORY_LABEL: Record<string, string> = {
   emotional: 'Emotional',
   failure: 'Failures',
   insane: 'Insane moments',
+  suspense: 'Suspense',
+  celebration: 'Celebrations',
+  punchline: 'Punchlines',
+  gameplay_outcome: 'Gameplay outcomes',
+}
+
+/** Every score a moment can have, in display order. */
+export const SCORE_LABEL: Record<string, string> = {
+  hook: 'Hook',
+  entertainment: 'Entertainment',
+  emotion: 'Emotional impact',
+  surprise: 'Surprise',
+  retention: 'Retention',
+  context: 'Setup and payoff',
+  replay: 'Replay',
+  standalone: 'Stands alone',
+  audio_quality: 'Sound quality',
+  visual_quality: 'Picture quality',
+}
+
+export const SCORE_SOURCE_LABEL: Record<string, string> = {
+  ai: 'AI estimate',
+  measured: 'measured',
+  'ai+measured': 'AI + transcript',
 }

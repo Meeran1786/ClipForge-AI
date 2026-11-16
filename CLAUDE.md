@@ -36,7 +36,8 @@ and what was not done. Never call a feature done because its screen exists.
 | `backend/clipforge/ingest/` | Video sources (yt-dlp based) |
 | `backend/clipforge/analysis/` | Sound and picture signals, speech-to-text |
 | `backend/clipforge/ai/` | AI provider layer (`Reasoner.ask_json`) |
-| `backend/clipforge/moments.py` | AI moment detection and viral score |
+| `backend/clipforge/moments.py` | AI moment detection and the moment score (8 AI parts + 2 measured, weighted average of the parts a moment has) |
+| `backend/clipforge/moment_quality.py` | Measured sound and picture quality of a moment (no AI) |
 | `backend/clipforge/duration.py` | Smart Duration engine: exact clip boundaries and part splitting, no AI |
 | `backend/clipforge/captions.py` | Word-synced captions: lines, styles, ASS output, timing and placement checks |
 | `backend/clipforge/music.py` | Licensed music: licence rules, track analysis, mood matching, beat alignment, ducking envelope |
@@ -80,6 +81,9 @@ Run from the repository root (`D:\ClipForge-AI`).
   re-captions without re-cutting. The AI is asked only by "Pick moments
   again", and for a Short's text: once per final render for clips without text
   (one request for all of them), and by "Write again".
+- **The moment score is an estimate, never a prediction.** Every part shows
+  whether the AI estimated it or code measured it; never word it as
+  predicting views or virality, and never change weights without the owner.
 - **Credit lines are written by code, never by the AI.** The creator credit
   and original link, the music credit, part numbers and #Shorts are added
   after the AI answers (`metadata.py`); links from the AI are removed.

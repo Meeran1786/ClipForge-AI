@@ -31,14 +31,16 @@ channel has not been tried yet: it needs the owner's Google Cloud client.
 | 7 | Music | Built; tested on synthetic music only |
 | 8 | Vertical framing and rendering | Done (facecam tested on a composite, not a real stream) |
 | 9 | Quality checks, titles and descriptions, export | Done |
-| 10 | YouTube publishing | Built; refusal gate passed; private upload waits for the owner's Google Cloud client |
+| 10 | YouTube publishing | Built; refusal gate passed; private upload not done (owner chose to skip it; optional) |
 
 ## Next
 
 Phase 11 (Creator Studio) is planned in [PHASE11_PLAN.md](PHASE11_PLAN.md)
 and was approved on 2026-11-17, with every proposal adopted. Milestone 11.9
-(the YouTube Shorts checklist) is done. 11.1 starts once the Phase 10 private
-upload is done; the rest is not started.
+(the YouTube Shorts checklist) and 11.1 (smarter moment picking: new
+categories, a hook score, measured sound and picture quality, a transcript
+context check, flags, moments found from movement) are done. 11.2 (scene
+understanding) is next; the rest is not started.
 
 ## Open items that need the owner
 
@@ -52,7 +54,9 @@ upload is done; the rest is not started.
    YouTube Audio Library), to test beat finding and mood matching on real
    songs. Phase 7 was tested on synthetic music only. Optional: Shorts can be
    made without music.
-4. **The Phase 10 gate: one private upload.** Create a Google Cloud project,
+4. **Optional (skipped for now): the Phase 10 private upload.** Only needed
+   if you want ClipForge to upload for you; otherwise export and upload
+   yourself. Create a Google Cloud project,
    enable the YouTube Data API v3, set the OAuth consent screen to Testing
    with your account as a test user, create an OAuth client of type "Desktop
    app" and download its JSON. Then in ClipForge, Settings → YouTube channel:
@@ -61,8 +65,12 @@ upload is done; the rest is not started.
 
 ## How it has been verified
 
-- 461 automated tests, using stand-ins for the platforms, the speech model,
+- 486 automated tests, using stand-ins for the platforms, the speech model,
   the AI and Google.
+- 11.1 moment picking re-run with the real AI on Tears of Steel and the
+  composed facecam video: new categories, flags, measured scores and
+  moments found from movement all worked; picture quality was 10 everywhere
+  on these clean films, so it is unproven on poor footage.
 - Caption placement (2026-11-17): every gate Short re-rendered with captions
   at 54–66% down and lines no wider than 704 of the 740 px allowed. Frames
   checked against YouTube's control zones (right-hand buttons, title at the

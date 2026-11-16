@@ -54,12 +54,26 @@ Options: `--port 9000`, `--no-browser`, `--data-dir <folder>`.
   (about 500 MB) downloads on first use. A three-hour stream takes roughly
   20–40 minutes to transcribe, and an interrupted run continues from the last
   finished ten-minute chunk.
-- After analysis the AI picks the moments worth clipping. Each gets a
-  category, seven marks out of ten, a viral score from 0 to 100, a reason in
-  plain words, and a note on what frames from the video showed. The project
-  page lists them with filters and a play button, and marks them on the
-  timeline. Changing a project's clip settings or the score weights
-  (Settings) re-ranks them at once without asking the AI again.
+- After analysis the AI picks the moments worth clipping. Each gets:
+  - a category: funny, shocking, unexpected, horror, rage, exciting,
+    emotional, failure, insane, suspense, celebration, punchline or gameplay
+    outcome;
+  - eight marks out of ten from the AI, including a "hook" for the first
+    seconds;
+  - two scores measured by the app itself, sound quality and picture
+    quality, with the reasons for any points off;
+  - a check of the transcript for a complete setup and payoff;
+  - flags for no dialogue, a reaction on screen, or gameplay;
+  - a score from 0 to 100, a reason in plain words, and a note on what frames
+    from the video showed.
+
+  The score is an estimate for ranking moments against each other; it does
+  not predict views. Moments with no dialogue can come from sudden loud
+  sounds or bursts of on-screen movement, and are kept only if the frames
+  show something. The project page lists the moments with filters and a play
+  button, and marks them on the timeline. Changing a project's clip settings
+  or the score weights (Settings, all ten parts) re-ranks them at once
+  without asking the AI again.
 - Picking needs an AI provider: the Antigravity command-line tool, signed in,
   or a Gemini API key in `.env`. Without one the video, timeline and
   transcript are still produced and the project says why moments are missing.

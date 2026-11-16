@@ -15,6 +15,8 @@ from .rights import download_blocker
 CATEGORIES = [
     "funny", "shocking", "unexpected", "horror", "rage",
     "exciting", "emotional", "failure", "insane",
+    # Phase 11.1
+    "suspense", "celebration", "punchline", "gameplay_outcome",
 ]
 
 RightsStatus = Literal["own", "licensed", "creator_permission", "unverified"]

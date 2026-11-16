@@ -588,7 +588,12 @@ Not done, and limits:
   different videos.
 - Export copies files; nothing is uploaded (Phase 10).
 
-## Phase 10 — YouTube publishing — built 2026-11-17, live upload waiting on the owner
+## Phase 10 — YouTube publishing — built 2026-11-17; live upload skipped by the owner (optional)
+
+On 2026-11-17 the owner chose to skip connecting a channel. They will upload
+exported Shorts themselves for now. The private-upload gate is therefore **not
+done**. It is optional, and can be run any time by following Settings →
+YouTube channel.
 
 - OAuth with the owner's channel via the YouTube Data API.
 - Upload as private, publish only after explicit approval per clip.
@@ -667,7 +672,7 @@ the owner with every proposal adopted. YouTube Shorts only.
 | Milestone | State |
 | --- | --- |
 | 11.9 YouTube Shorts optimisation | Done: server-side Shorts checklist enforced by upload and publish, edited text sent to uploaded videos; 23 tests |
-| 11.1 Advanced viral intelligence | Next, after the Phase 10 private upload |
+| 11.1 Advanced viral intelligence | Done: 4 new categories, hook score, measured sound and picture quality, transcript context check, flags, movement-burst candidates, duplicates by words; 22 tests; live on two openly licensed videos (details in PHASE11_PLAN.md) |
 | 11.2–11.8, 11.10 | Not started |
 
 ## Later

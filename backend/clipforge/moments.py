@@ -33,20 +33,31 @@ log = logging.getLogger("clipforge.moments")
 
 _NO_WINDOW = subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
 
-SUBSCORES = ["entertainment", "emotion", "surprise", "retention", "context", "replay", "standalone"]
+# Judged by the AI, 0-10 each.
+SUBSCORES = ["entertainment", "emotion", "surprise", "retention", "context", "replay", "standalone", "hook"]
+# Measured by code from the sound and the picture, 0-10 each (Phase 11.1).
+MEASURED = ["audio_quality", "visual_quality"]
+SCORE_KEYS = SUBSCORES + MEASURED
 DEFAULT_WEIGHTS = {
-    "entertainment": 0.22, "emotion": 0.15, "surprise": 0.18, "retention": 0.15,
-    "context": 0.10, "replay": 0.10, "standalone": 0.10,
+    "entertainment": 0.18, "emotion": 0.13, "surprise": 0.13, "retention": 0.11,
+    "context": 0.10, "replay": 0.07, "standalone": 0.09, "hook": 0.09,
+    "audio_quality": 0.05, "visual_quality": 0.05,
 }
 SUBSCORE_MEANING = {
     "entertainment": "how fun or gripping it is to watch",
     "emotion": "how strong the feeling is (laughter, fear, anger, joy)",
     "surprise": "how unexpected the turn is",
     "retention": "how likely a viewer is to watch to the end",
-    "context": "whether the setup and the payoff are both there",
+    "context": "whether the setup and the payoff are both there (the AI's view, checked against the transcript)",
     "replay": "how likely a viewer is to watch it again or share it",
     "standalone": "whether it makes sense with no knowledge of the rest of the video",
+    "hook": "how strongly the first seconds grab attention",
+    "audio_quality": "measured: speech level, clipping, silence and background in the sound",
+    "visual_quality": "measured: sharpness, brightness, black and frozen picture",
 }
+SCORE_SOURCE = {**{k: "ai" for k in SUBSCORES}, **{k: "measured" for k in MEASURED}, "context": "ai+measured"}
+SCORE_NOTE = ("An estimate from the AI's judgement and measured signals, to rank moments against each other. "
+              "It does not predict views.")
 
 CHUNK_SECONDS = 20 * 60
 CHUNK_OVERLAP = 60
@@ -83,6 +94,8 @@ class Candidate:
     core_start: float | None = None
     core_end: float | None = None
     extra: dict[str, Any] = field(default_factory=dict)
+    measured: dict[str, Any] = field(default_factory=dict)  # audio/visual quality, transcript context check
+    flags: dict[str, bool] = field(default_factory=dict)  # no_dialogue, reaction, gameplay
 
     @property
     def length(self) -> float:
@@ -93,9 +106,9 @@ class Candidate:
 
 
 def clean_weights(raw: dict[str, Any] | None) -> dict[str, float]:
-    """Weights for every sub-score, non-negative, summing to 1."""
+    """Weights for every score, non-negative, summing to 1. A part missing from `raw` gets its default."""
     out = {}
-    for key in SUBSCORES:
+    for key in SCORE_KEYS:
         try:
             out[key] = max(0.0, float((raw or {}).get(key, DEFAULT_WEIGHTS[key])))
         except (TypeError, ValueError):
@@ -106,10 +119,30 @@ def clean_weights(raw: dict[str, Any] | None) -> dict[str, float]:
     return {k: round(v / total, 4) for k, v in out.items()}
 
 
-def viral_score(subscores: dict[str, Any], weights: dict[str, float]) -> int:
-    """0-100 from seven 0-10 sub-scores."""
-    total = sum(weights[k] * _clamp_score(subscores.get(k)) for k in SUBSCORES)
-    return int(round(total * 10))
+def score_parts(subscores: dict[str, Any], measured: dict[str, Any] | None = None) -> dict[str, int]:
+    """Every score that exists for a moment, 0-10. Context blends the AI's view with the transcript check.
+
+    A part that was never scored (a moment found before that part existed, or one with no speech for the
+    transcript check) is left out rather than counted as zero.
+    """
+    parts = {k: _clamp_score(subscores[k]) for k in SUBSCORES if subscores.get(k) is not None}
+    measured = measured or {}
+    code = measured.get("context_code")
+    if code is not None and "context" in parts:
+        parts["context"] = int(round((parts["context"] + _clamp_score(code)) / 2))
+    for k in MEASURED:
+        if measured.get(k) is not None:
+            parts[k] = _clamp_score(measured[k])
+    return parts
+
+
+def viral_score(subscores: dict[str, Any], weights: dict[str, float], measured: dict[str, Any] | None = None) -> int:
+    """0-100: the weighted average of the 0-10 scores a moment has, scaled up."""
+    parts = score_parts(subscores, measured)
+    total_weight = sum(weights.get(k, 0.0) for k in parts)
+    if total_weight <= 0:
+        return 0
+    return int(round(sum(weights.get(k, 0.0) * v for k, v in parts.items()) / total_weight * 10))
 
 
 def _clamp_score(value: Any) -> int:
@@ -200,6 +233,27 @@ TEXT_SCHEMA = {
 }
 
 
+CATEGORY_MEANING = {
+    "funny": "something makes people laugh",
+    "shocking": "something startling or hard to believe",
+    "unexpected": "a turn nobody saw coming",
+    "horror": "fear, a scare or something creepy",
+    "rage": "anger or frustration boiling over",
+    "exciting": "high energy, tension, a close call",
+    "emotional": "a heartfelt, sad or touching moment",
+    "failure": "something goes wrong, a fail or a blunder",
+    "insane": "an extreme or unbelievable feat",
+    "suspense": "tension building towards something",
+    "celebration": "a win, cheering, joy after success",
+    "punchline": "a line that lands a joke or a sharp comeback",
+    "gameplay_outcome": "how a game moment turns out: a clutch win, a loss, a surprising result",
+}
+
+
+def _category_guide(categories: list[str]) -> str:
+    return "; ".join(f"{c} = {CATEGORY_MEANING.get(c, c)}" for c in categories)
+
+
 def _rubric() -> str:
     return "\n".join(f"- {k}: {SUBSCORE_MEANING[k]}" for k in SUBSCORES)
 
@@ -214,9 +268,14 @@ How to read the transcript: each line is "L<number> [time] words". "(N second pa
 "<sudden loud moment>" marks a line where the sound suddenly got much louder than usual. Loudness is a hint
 only: many loud lines are dull and many great moments are quiet.
 
+What the categories mean: {_category_guide(categories)}
+
 Rules:
 - A moment must make sense to someone who has not seen the rest of the video. Start it at the line that sets
   it up and end it after the punchline or reaction has finished.
+- Read the lines before and after each moment. Do not pick a moment whose setup or payoff falls outside it,
+  that ends before the punchline, or that cuts a conversation off mid-exchange (a question just before the
+  answer, someone mid-sentence).
 - Aim for {min_len} to {max_len} seconds from the first line's time to the last line's.
 - Use only the lines below. Never describe something the lines do not show. If you are not sure what
   happened, say so in the reason instead of inventing it.
@@ -235,6 +294,36 @@ For each moment give:
 Transcript:
 {listing}
 """
+
+
+_ENDS = (".", "!", "?", "…", '."', '!"', '?"')
+CLEAN_GAP = 1.0  # a pause this long before the first line, or after the last, marks a natural edge
+ANSWER_WINDOW = 2.5  # a question answered within this long after the moment ends is left hanging
+TALK_ON = 0.4  # the next line starting this soon after means the exchange carries on
+
+
+def context_check(lines: list[Line], first: Line, last: Line) -> tuple[int, list[str]]:
+    """0-10 for whether the moment starts where a thought starts and ends where one ends, from the transcript.
+
+    Measured, not judged: it only looks at punctuation and timing around the edges.
+    """
+    by_n = {line.n: line for line in lines}
+    before, after = by_n.get(first.n - 1), by_n.get(last.n + 1)
+    score, notes = 10, []
+    if before is not None and before.end > first.start - CLEAN_GAP and not before.text.rstrip().endswith(_ENDS):
+        score -= 3
+        notes.append("starts in the middle of a sentence")
+    ends_clean = last.text.rstrip().endswith(_ENDS) or after is None or after.start - last.end >= CLEAN_GAP
+    if not ends_clean:
+        score -= 3
+        notes.append("ends before the sentence is finished")
+    if last.text.rstrip().endswith("?") and after is not None and after.start - last.end <= ANSWER_WINDOW:
+        score -= 4
+        notes.append("ends on a question that is answered just after")
+    elif after is not None and 0 <= after.start - last.end < TALK_ON and ends_clean:
+        score -= 2
+        notes.append("the conversation carries straight on after it")
+    return max(0, score), notes
 
 
 def _excerpt(lines: list[Line], limit: int = 600) -> str:
@@ -279,12 +368,16 @@ def parse_text_moments(
         peak = peak_line.start if peak_line and first.n <= peak_line.n <= last.n else first.start
         start, end = fit_length(first.start, last.end, peak, min_len, max_len, total)
         inside = [line for line in chunk if line.end > start and line.start < end]
+        context, notes = context_check(chunk, first, last)
+        words = sum(len(line.text.split()) for line in inside)
         found.append(Candidate(
             start=start, end=end, peak=round(peak, 2), category=category,
             subscores=clean_subscores(item.get("scores")),
             reason=str(item.get("reason") or "").strip()[:600],
             excerpt=_excerpt(inside),
             core_start=round(first.start, 2), core_end=round(last.end, 2),
+            measured={"context_code": context, "context_notes": notes},
+            flags={"no_dialogue": words < 4},
         ))
     return found
 
@@ -323,9 +416,49 @@ def signal_candidates(
             reason=f"The sound suddenly rose by {event.get('rise_db', 0):.0f} dB here.",
             excerpt=_excerpt(inside), source="signals",
             core_start=round(start, 2), core_end=round(end, 2),
+            flags={"no_dialogue": sum(len(line.text.split()) for line in inside) < 4},
         ))
         if len(out) >= limit:
             break
+    return out
+
+
+MOTION_FACTOR = 3.0  # on-screen movement this many times the video's usual is worth a look
+MOTION_LIMIT = 3
+
+
+def motion_candidates(
+    motion: list[float], hop: float, covered: list[Candidate], lines: list[Line],
+    min_len: float, max_len: float, total: float, limit: int = MOTION_LIMIT,
+) -> list[Candidate]:
+    """Bursts of movement on screen that nothing else picked: a crash or a fight can happen in silence.
+
+    They go to the picture check like loud moments, and are kept only if the frames show something.
+    """
+    if not motion or hop <= 0:
+        return []
+    values = sorted(motion)
+    usual = values[len(values) // 2] or 1e-6
+    target = (min_len + max_len) / 2
+    out: list[Candidate] = []
+    for i in sorted(range(len(motion)), key=lambda i: -motion[i]):
+        if motion[i] < MOTION_FACTOR * usual or len(out) >= limit:
+            break
+        t = i * hop
+        if any(c.start - 3 <= t <= c.end + 3 for c in covered + out):
+            continue
+        start = max(0.0, t - 0.5 * target)
+        end = min(total, start + target) if total else start + target
+        inside = [line for line in lines if line.end > start and line.start < end]
+        out.append(Candidate(
+            start=round(start, 2), end=round(end, 2), peak=round(t, 2), category="unexpected",
+            subscores={k: 0 for k in SUBSCORES},
+            reason=f"A burst of movement on screen here ({motion[i] / usual:.0f}× the video's usual).",
+            excerpt=_excerpt(inside), source="signals",
+            core_start=round(start, 2), core_end=round(end, 2),
+            flags={"no_dialogue": sum(len(line.text.split()) for line in inside) < 4},
+            extra={"found_by": "motion"},
+        ))
     return out
 
 
@@ -364,8 +497,10 @@ VISUAL_SCHEMA = {
                     "keep": {"type": "boolean"},
                     "category": {"type": "string", "enum": CATEGORIES},
                     "scores": _SCORES_SCHEMA,
+                    "reaction": {"type": "boolean"},
+                    "gameplay": {"type": "boolean"},
                 },
-                "required": ["id", "seen", "picture_useful", "keep", "category", "scores"],
+                "required": ["id", "seen", "picture_useful", "keep", "category", "scores", "reaction", "gameplay"],
             },
         }
     },
@@ -401,7 +536,10 @@ Rules:
   words alone. When "picture_useful" is false, repeat the scores and category you were given, unchanged.
 - "keep": for a moment that has scores from the words, always true. For a moment picked only because the
   sound got loud, true only if the frames show something worth a short clip.
-- "category": one of {", ".join(categories)}.
+- "category": one of {", ".join(categories)} ({_category_guide(categories)}).
+- "reaction": true only if a face or body clearly reacts in the frames (shock, laughter, anger, joy).
+- "gameplay": true only if the frames show a video game being played.
+- A moment marked "(no speech)" is carried by the picture and sound alone: judge it on what the frames show.
 - "scores": each 0 to 10, strict (5 is average). Start from the scores given and change them only as far as
   the picture justifies, up or down:
 {_rubric()}
@@ -421,6 +559,9 @@ def apply_visual(answer: dict[str, Any], batch: list[tuple[int, Candidate, str]]
         c.visual_checked = True
         useful = bool(item.get("picture_useful", True))
         c.extra["picture_useful"] = useful
+        if useful:
+            c.flags["reaction"] = bool(item.get("reaction", False))
+            c.flags["gameplay"] = bool(item.get("gameplay", False))
         if c.source == "signals":
             # Nothing but a loud sound vouches for this one, so the picture has to.
             c.extra["keep"] = useful and bool(item.get("keep", False))
@@ -435,15 +576,27 @@ def apply_visual(answer: dict[str, Any], batch: list[tuple[int, Candidate, str]]
 # ---- putting it together -------------------------------------------------------
 
 
+SAME_WORDS = 0.6  # two moments sharing this much of their words tell the same story
+
+
+def _words(text: str) -> set[str]:
+    return {w.strip(".,!?\"'…").lower() for w in text.split() if len(w.strip(".,!?\"'…")) > 2}
+
+
+def same_story(a: Candidate, b: Candidate) -> bool:
+    """Two moments that overlap in time by more than half, or repeat the same words (a story told twice)."""
+    overlap = min(a.end, b.end) - max(a.start, b.start)
+    if overlap > 0.5 * min(a.length, b.length):
+        return True
+    wa, wb = _words(a.excerpt), _words(b.excerpt)
+    return len(wa) >= 8 and len(wb) >= 8 and len(wa & wb) / len(wa | wb) >= SAME_WORDS
+
+
 def drop_duplicates(candidates: list[Candidate]) -> list[Candidate]:
-    """Best first; drop any that overlaps a better one by more than half of the shorter of the two."""
+    """Best first; drop any that tells the same story as a better one (overlapping, or the same words)."""
     kept: list[Candidate] = []
     for c in sorted(candidates, key=lambda c: (-c.score, c.start)):
-        for k in kept:
-            overlap = min(c.end, k.end) - max(c.start, k.start)
-            if overlap > 0.5 * min(c.length, k.length):
-                break
-        else:
+        if not any(same_story(c, k) for k in kept):
             kept.append(c)
     return kept
 
@@ -475,8 +628,15 @@ def detect_moments(
     work_dir: Path,
     report: Callable[[float, str], None],
     check: Callable[[], None] | None = None,
+    motion: list[float] | None = None,
+    motion_hop: float = 0.0,
+    measure: Callable[[Candidate], dict[str, Any]] | None = None,
 ) -> tuple[list[Candidate], dict[str, Any]]:
-    """`report(progress, message)` updates the progress bar; `check()` raises if the job was cancelled."""
+    """`report(progress, message)` updates the progress bar; `check()` raises if the job was cancelled.
+
+    `motion` is the on-screen movement curve (bursts nobody talked over become candidates);
+    `measure(candidate)` returns its measured audio and visual quality.
+    """
     categories = [c for c in CATEGORIES if c in (options.get("categories") or CATEGORIES)]
     min_len, max_len = length_bounds(options)
     max_clips = int(options.get("max_clips", 8))
@@ -495,13 +655,16 @@ def detect_moments(
         notes["text_calls"] += 1
         candidates += parse_text_moments(answer, chunk, categories, min_len, max_len, duration)
     for c in candidates:
-        c.score = viral_score(c.subscores, weights)
+        c.score = viral_score(c.subscores, weights, c.measured)
     candidates = drop_duplicates(candidates)
     notes["from_words"] = len(candidates)
 
-    # 2. loud moments nobody talked over
+    # 2. loud moments and bursts of movement nobody talked over
     extra = signal_candidates(events, candidates, lines, min_len, max_len, duration)
     notes["from_sound"] = len(extra)
+    moving = motion_candidates(motion or [], motion_hop, candidates + extra, lines, min_len, max_len, duration)
+    notes["from_motion"] = len(moving)
+    extra += moving
 
     # 3. the picture, for the candidates that could make the cut
     to_check = candidates[: max(2 * max_clips, VISUAL_BATCH)] + extra
@@ -531,11 +694,21 @@ def detect_moments(
     # A loud moment only counts if the picture check actually vouched for it.
     # Moments picked from the words are never dropped by the picture check.
     kept_extra = [c for c in extra if c.visual_checked and c.extra.get("keep")]
-    notes["from_sound_kept"] = len(kept_extra)
+    notes["from_sound_kept"] = sum(1 for c in kept_extra if c.extra.get("found_by") != "motion")
+    notes["from_motion_kept"] = sum(1 for c in kept_extra if c.extra.get("found_by") == "motion")
     notes["picture_added_nothing"] = sum(1 for c in candidates if c.extra.get("picture_useful") is False)
     candidates = candidates + kept_extra
+    if measure is not None:
+        report(0.97, "Measuring sound and picture quality")
+        for c in candidates:
+            if check:
+                check()
+            try:
+                c.measured.update(measure(c))
+            except (MediaError, OSError, ValueError) as exc:  # a measurement that fails leaves the AI scores
+                log.warning("Could not measure %.1f-%.1f s: %s", c.start, c.end, exc)
     for c in candidates:
-        c.score = viral_score(c.subscores, weights)
+        c.score = viral_score(c.subscores, weights, c.measured)
     ranked = select(drop_duplicates(candidates), options)
     notes["provider"] = reasoner.name  # the model that actually answered
     notes.update(found=len(ranked), selected=sum(c.selected for c in ranked),

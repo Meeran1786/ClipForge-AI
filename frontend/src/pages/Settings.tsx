@@ -4,6 +4,7 @@ import { api, type ProjectOptions } from '../api'
 import { MusicLibrary } from '../components/MusicLibrary'
 import { OptionsForm, optionsError } from '../components/OptionsForm'
 import { YouTubeChannel } from '../components/YouTubeChannel'
+import { SCORE_LABEL, SCORE_SOURCE_LABEL } from '../format'
 import { Badge, Empty, ErrorNote, JobPanel, PageHeader, Section, Spinner } from '../ui'
 
 function Row({ label, children }: { label: string; children: ReactNode }) {
@@ -60,15 +61,7 @@ function Defaults({ categories }: { categories: string[] }) {
   )
 }
 
-const WEIGHT_LABEL: Record<string, string> = {
-  entertainment: 'Entertainment',
-  emotion: 'Emotion',
-  surprise: 'Surprise',
-  retention: 'Retention',
-  context: 'Setup and payoff',
-  replay: 'Replay',
-  standalone: 'Stands alone',
-}
+const WEIGHT_LABEL = SCORE_LABEL
 
 function ScoreWeights() {
   const qc = useQueryClient()
@@ -98,14 +91,18 @@ function ScoreWeights() {
   return (
     <>
       <p className="mb-4 text-sm text-soft">
-        The AI gives each moment seven marks out of ten. The viral score is their weighted sum, worked out here, so
-        changing a weight re-scores every moment at once without asking the AI again.
+        Each moment gets eight marks out of ten from the AI and two measured from its sound and picture; “setup and
+        payoff” also takes in a check of the transcript. The score is their weighted average, worked out here, so
+        changing a weight re-scores every moment at once without asking the AI again. {current.data.note}
       </p>
       <div className="space-y-2.5">
         {Object.keys(WEIGHT_LABEL).map((key) => (
           <div key={key} className="flex items-center gap-3">
             <label htmlFor={`w-${key}`} className="w-36 shrink-0 text-sm">
               {WEIGHT_LABEL[key]}
+              <span className="block text-[10px] text-faint">
+                {SCORE_SOURCE_LABEL[current.data.source?.[key] ?? 'ai']}
+              </span>
             </label>
             <input
               id={`w-${key}`}
@@ -250,7 +247,7 @@ export default function Settings() {
             <p className="mb-5 text-sm text-soft">New projects start with these. Each project can change them.</p>
             <Defaults categories={s.categories} />
           </Section>
-          <Section title="Viral score weights">
+          <Section title="Moment score weights">
             <ScoreWeights />
           </Section>
           <SelfTest />

@@ -18,7 +18,24 @@ Shorts only.
       metadata stays editable and can be sent to an uploaded video, and
       publishing still needs explicit confirmation. Thumbnail rules come with
       11.4.
-- [ ] 11.1 Advanced viral intelligence
+- [~] 11.1 Advanced viral intelligence. Built and tested:
+      - **Categories:** funny, unexpected, shocking, horror, rage, plus the
+        new suspense, celebration (excitement), punchline and
+        gameplay_outcome; emotional reactions.
+      - **Moments without dialogue:** from loud sounds and movement bursts,
+        confirmed by the picture.
+      - **Scores:** reaction and gameplay flags from the picture check; a
+        transcript context check (setup and payoff, unfinished sentence,
+        unanswered question, conversation carrying on); duplicates by time
+        and by words; hook, entertainment, emotional impact, context
+        completeness, measured sound and picture quality, and an overall
+        estimate with editable, transparent weights.
+
+      Partly met:
+      - facial expressions are judged on sampled still frames only (scene
+        understanding is 11.2);
+      - picture quality and the context check are unproven on poor footage;
+      - nothing has run on real stream or game footage yet.
 - [ ] 11.2 Scene understanding
 - [ ] 11.3 Caption intelligence
 - [ ] 11.4 Title, description and thumbnail studio

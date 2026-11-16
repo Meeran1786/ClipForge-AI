@@ -21,7 +21,15 @@ from ..exports import export_folder
 from ..jobs.engine import job_to_dict
 from ..media import VIDEO_EXTENSIONS, tool_version
 from ..models import Clip, Job, Moment, Project, Setting
-from ..moments import DEFAULT_WEIGHTS, SUBSCORE_MEANING, SUBSCORES, clean_weights, viral_score
+from ..moments import (
+    DEFAULT_WEIGHTS,
+    SCORE_KEYS,
+    SCORE_NOTE,
+    SCORE_SOURCE,
+    SUBSCORE_MEANING,
+    clean_weights,
+    viral_score,
+)
 from ..music import AUDIO_EXTENSIONS
 from ..pipelines import WEIGHTS_KEY, load_weights, reselect
 from ..schemas import CATEGORIES, ProjectOptions, project_to_dict
@@ -115,22 +123,27 @@ def put_defaults(body: ProjectOptions, ctx: AppContext = Depends(get_ctx)) -> di
     return body.model_dump()
 
 
+def _weights_view(weights: dict[str, float]) -> dict:
+    return {"weights": weights, "defaults": DEFAULT_WEIGHTS, "meaning": SUBSCORE_MEANING,
+            "source": SCORE_SOURCE, "note": SCORE_NOTE}
+
+
 @router.get("/settings/weights")
 def get_weights(ctx: AppContext = Depends(get_ctx)) -> dict:
     with ctx.session() as s:
-        return {"weights": load_weights(s), "defaults": DEFAULT_WEIGHTS, "meaning": SUBSCORE_MEANING}
+        return _weights_view(load_weights(s))
 
 
 @router.put("/settings/weights")
 def put_weights(body: dict[str, float], ctx: AppContext = Depends(get_ctx)) -> dict:
-    """Change how the seven sub-scores add up. Every stored moment is re-scored at once, without the AI."""
-    unknown = [k for k in body if k not in SUBSCORES]
+    """Change how the scores add up. Every stored moment is re-scored at once, without the AI."""
+    unknown = [k for k in body if k not in SCORE_KEYS]
     if unknown:
         raise HTTPException(422, f"Unknown score parts: {', '.join(unknown)}")
     if any(not isinstance(v, (int, float)) or v < 0 for v in body.values()) or sum(body.values()) <= 0:
         raise HTTPException(422, "Weights must be zero or more, and not all zero")
     # The body is the whole set: a part that is left out counts for nothing.
-    weights = clean_weights({k: body.get(k, 0) for k in SUBSCORES})
+    weights = clean_weights({k: body.get(k, 0) for k in SCORE_KEYS})
     changed: list[int] = []
     with ctx.session() as s:
         row = s.get(Setting, WEIGHTS_KEY)
@@ -139,7 +152,7 @@ def put_weights(body: dict[str, float], ctx: AppContext = Depends(get_ctx)) -> d
         else:
             row.value = weights
         for moment in s.scalars(select(Moment)).all():
-            moment.score = viral_score(moment.subscores or {}, weights)
+            moment.score = viral_score(moment.subscores or {}, weights, moment.measured)
         s.flush()
         for project in s.scalars(select(Project)).all():
             if (project.analysis or {}).get("moments"):
@@ -148,7 +161,7 @@ def put_weights(body: dict[str, float], ctx: AppContext = Depends(get_ctx)) -> d
         s.commit()
     for project_id in changed:
         ctx.bus.publish({"type": "project", "id": project_id})
-    return {"weights": weights, "defaults": DEFAULT_WEIGHTS, "meaning": SUBSCORE_MEANING}
+    return _weights_view(weights)
 
 
 @router.get("/captions/presets")

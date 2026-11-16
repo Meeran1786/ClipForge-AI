@@ -1,17 +1,13 @@
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { useMemo, useState } from 'react'
 import { api, type Moment, type Project } from '../api'
-import { CATEGORY_LABEL, duration as clock } from '../format'
+import { CATEGORY_LABEL, SCORE_LABEL, duration as clock } from '../format'
 import { Badge, Empty, ErrorNote, Section } from '../ui'
 
-const SUBSCORE_LABEL: Record<string, string> = {
-  entertainment: 'Entertainment',
-  emotion: 'Emotion',
-  surprise: 'Surprise',
-  retention: 'Retention',
-  context: 'Setup and payoff',
-  replay: 'Replay',
-  standalone: 'Stands alone',
+const SOURCE: Record<string, string> = {
+  audio_quality: 'measured',
+  visual_quality: 'measured',
+  context: 'AI + transcript',
 }
 
 function scoreTone(score: number): string {
@@ -43,7 +39,10 @@ function MomentRow({ moment, onPlay }: { moment: Moment; onPlay: (t: number) => 
             </button>
             {moment.selected && <Badge tone="warn">Selected</Badge>}
             {!moment.visual_checked && <Badge>Words only</Badge>}
-            {moment.source === 'signals' && <Badge>Found by sound</Badge>}
+            {moment.source === 'signals' && <Badge>Found by sound or movement</Badge>}
+            {moment.flags?.no_dialogue && <Badge>No dialogue</Badge>}
+            {moment.flags?.reaction && <Badge tone="info">Reaction on screen</Badge>}
+            {moment.flags?.gameplay && <Badge tone="info">Gameplay</Badge>}
           </div>
           <p className="mt-2 text-sm leading-relaxed text-ink">{moment.reason || 'No reason given.'}</p>
           <button className="mt-1.5 cursor-pointer text-xs text-soft hover:text-ink" onClick={() => setOpen(!open)}>
@@ -51,22 +50,36 @@ function MomentRow({ moment, onPlay }: { moment: Moment; onPlay: (t: number) => 
           </button>
           {open && (
             <div className="mt-3 grid gap-4 sm:grid-cols-2">
-              <dl className="space-y-1.5">
-                {Object.entries(SUBSCORE_LABEL).map(([key, label]) => {
-                  const v = moment.subscores[key] ?? 0
-                  return (
-                    <div key={key} className="flex items-center gap-2 text-xs">
-                      <dt className="w-28 shrink-0 text-soft">{label}</dt>
-                      <dd className="flex flex-1 items-center gap-2">
-                        <span className="h-1.5 flex-1 overflow-hidden rounded-full bg-raised">
-                          <span className="block h-full rounded-full bg-accent" style={{ width: `${v * 10}%` }} />
-                        </span>
-                        <span className="w-4 text-right tabular-nums text-ink">{v}</span>
-                      </dd>
-                    </div>
-                  )
-                })}
-              </dl>
+              <div>
+                <dl className="space-y-1.5">
+                  {Object.entries(SCORE_LABEL).map(([key, label]) => {
+                    const v = (moment.parts ?? moment.subscores)[key]
+                    if (v === undefined) return null
+                    const measured = SOURCE[key] === 'measured'
+                    return (
+                      <div key={key} className="flex items-center gap-2 text-xs">
+                        <dt className="w-32 shrink-0 text-soft">
+                          {label}
+                          <span className="block text-[10px] text-faint">{SOURCE[key] ?? 'AI estimate'}</span>
+                        </dt>
+                        <dd className="flex flex-1 items-center gap-2">
+                          <span className="h-1.5 flex-1 overflow-hidden rounded-full bg-raised">
+                            <span
+                              className={`block h-full rounded-full ${measured ? 'bg-good' : 'bg-accent'}`}
+                              style={{ width: `${v * 10}%` }}
+                            />
+                          </span>
+                          <span className="w-4 text-right tabular-nums text-ink">{v}</span>
+                        </dd>
+                      </div>
+                    )
+                  })}
+                </dl>
+                <p className="mt-2 text-[11px] leading-snug text-faint">
+                  The score is an estimate for ranking moments against each other, from the AI's judgement and
+                  measured sound and picture. It does not predict views.
+                </p>
+              </div>
               <div className="space-y-3 text-xs leading-relaxed">
                 <div>
                   <div className="font-medium text-soft">What is said</div>
@@ -78,6 +91,26 @@ function MomentRow({ moment, onPlay }: { moment: Moment; onPlay: (t: number) => 
                     {moment.visual ?? 'Not checked against the picture; the scores come from the words alone.'}
                   </p>
                 </div>
+                {[
+                  ...(moment.measured?.context_notes ?? []).map((n) => `Context: ${n}`),
+                  ...(moment.measured?.audio_detail?.notes ?? []).map((n) => `Sound: ${n}`),
+                  ...(moment.measured?.visual_detail?.notes ?? []).map((n) => `Picture: ${n}`),
+                ].length > 0 && (
+                  <div>
+                    <div className="font-medium text-soft">What lowered the measured scores</div>
+                    <ul className="mt-0.5 list-disc pl-4 text-ink">
+                      {(moment.measured?.context_notes ?? []).map((n) => (
+                        <li key={`c-${n}`}>Context: {n}</li>
+                      ))}
+                      {(moment.measured?.audio_detail?.notes ?? []).map((n) => (
+                        <li key={`a-${n}`}>Sound: {n}</li>
+                      ))}
+                      {(moment.measured?.visual_detail?.notes ?? []).map((n) => (
+                        <li key={`v-${n}`}>Picture: {n}</li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
               </div>
             </div>
           )}

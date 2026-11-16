@@ -52,6 +52,10 @@ CATEGORY_MOODS: dict[str, list[str]] = {
     "exciting": ["energetic"],
     "emotional": ["emotional"],
     "insane": ["energetic", "dramatic"],
+    "suspense": ["suspense", "dramatic"],
+    "celebration": ["energetic", "emotional"],
+    "punchline": ["comedic"],
+    "gameplay_outcome": ["energetic", "intense"],
 }
 
 # licence name -> does it require crediting the author

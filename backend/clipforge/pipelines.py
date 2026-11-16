@@ -36,6 +36,7 @@ from .analysis.video_signals import analyse_video
 from .ingest import PLATFORM_LABELS, IngestRefused, source_for
 from .jobs.engine import Pipeline, StageContext, StageDef
 from . import metadata as md
+from . import moment_quality
 from . import qc
 from . import youtube as yt
 from .ai.base import AIError
@@ -382,6 +383,15 @@ def _moments(ctx: StageContext) -> dict:
         lines = [Line(i, r.start, r.end, r.text) for i, r in enumerate(rows, start=1)]
     signals_file = ctx.settings.project_dir(ctx.project_id) / "audio_signals.json"
     events = json.loads(signals_file.read_text(encoding="utf-8")).get("events", []) if signals_file.is_file() else []
+    video_file = ctx.settings.project_dir(ctx.project_id) / "video_signals.json"
+    video_signals = json.loads(video_file.read_text(encoding="utf-8")) if video_file.is_file() else {}
+    motion, motion_hop = list(video_signals.get("motion") or []), float(video_signals.get("hop") or 0)
+    with ctx.session() as s:
+        audio_path = s.get(Project, ctx.project_id).audio_path
+    audio = Path(audio_path) if audio_path else None
+
+    def measure(c) -> dict:
+        return moment_quality.measure(ctx.settings, audio, proxy, motion, motion_hop, c.start, c.end)
 
     if not lines and not events:
         with ctx.session() as s:
@@ -397,7 +407,7 @@ def _moments(ctx: StageContext) -> dict:
         reasoner, ctx.settings,
         lines=lines, events=events, duration=duration, proxy=proxy, options=options, weights=weights,
         work_dir=ctx.settings.project_dir(ctx.project_id) / "sheets",
-        report=ctx.report, check=ctx.check,
+        report=ctx.report, check=ctx.check, motion=motion, motion_hop=motion_hop, measure=measure,
     )
     shutil.rmtree(ctx.settings.project_dir(ctx.project_id) / "sheets", ignore_errors=True)
 
@@ -409,7 +419,7 @@ def _moments(ctx: StageContext) -> dict:
                 project_id=ctx.project_id, start=c.start, end=c.end, peak=c.peak, category=c.category,
                 score=c.score, subscores=c.subscores, reason=c.reason, excerpt=c.excerpt, visual=c.visual,
                 visual_checked=c.visual_checked, source=c.source, rank=c.rank, selected=c.selected,
-                core_start=c.core_start, core_end=c.core_end,
+                core_start=c.core_start, core_end=c.core_end, measured=c.measured or None, flags=c.flags or None,
             )
             for c in ranked
         )

@@ -579,7 +579,74 @@ Google Cloud client); 11.1 starts after it, and 11.9 does not depend on it.
 | Milestone | State |
 | --- | --- |
 | 11.9 YouTube Shorts optimisation | Done 2026-11-17 (see below) |
-| 11.1–11.8, 11.10 | Not started; 11.1 waits for the Phase 10 private upload |
+| 11.1 Advanced viral intelligence | Done 2026-11-17 (see below; the owner skipped the Phase 10 private upload, so it no longer waited) |
+| 11.2–11.8, 11.10 | Not started. 11.8 analytics needs a connected channel, so it waits until the owner sets one up |
+
+### 11.1 as built
+
+- **Categories.** Four new: suspense, celebration, punchline and
+  gameplay_outcome, each explained to the AI and given music moods. Saved
+  projects keep their own category lists.
+- **Scores**, ten in all, each labelled where it comes from:
+  - AI: entertainment, emotion, surprise, retention, context, replay,
+    standalone, and the new **hook**;
+  - **measured** by code (`moment_quality.py`): audio quality (speech level,
+    silence, clipping, voice against background) and visual quality
+    (sharpness, brightness, black frames, standing still), each with the
+    reasons that took points off;
+  - context is the AI's view averaged with a **transcript check**
+    (`context_check`: starts mid-sentence, ends unfinished, ends on a
+    question answered just after, conversation carries straight on).
+- **Overall** is the weighted average of the parts a moment has; weights for
+  all ten are editable in Settings. A moment from before 11.1 is not marked
+  down for the parts it lacks, and old saved weights get defaults for the new
+  parts.
+- **Wording.** The UI calls it a moment score and says it is an estimate for
+  ranking that does not predict views.
+- **Flags:** no dialogue (fewer than four words), and from the picture check
+  a reaction on screen or gameplay, set only when the frames were informative.
+- **Moments without dialogue.** Bursts of on-screen movement (3× the video's
+  usual or more) that nothing else picked become candidates, like loud
+  moments, and are kept only if the picture check vouches for them.
+- **Duplicates.** Besides overlapping by more than half, two moments that
+  share 60% of their words are one story told twice; the better one is kept.
+- **Database.** New nullable `moments.measured` and `moments.flags` columns.
+  `/moments` returns `parts`, `measured` and `flags`; `/settings/weights`
+  returns each part's source and the note.
+
+Tests: 22 new (`test_moment_intelligence.py`), plus the old score tests now
+checked against the scoring rules. They cover:
+- the categories and the prompt;
+- consistency, and malformed AI scores;
+- each context failure;
+- duplicates by words and by time;
+- movement bursts, including the flat and already-covered cases;
+- the flags only from an informative picture;
+- each sound and picture fault lowering its score with a reason;
+- measuring real files;
+- the API.
+
+486 tests pass in all.
+
+Live check with the real AI, picking moments again on two openly licensed
+test videos:
+- **Tears of Steel:** 9 moments. Two came from movement bursts and two from
+  loud sounds, all confirmed by the picture. Reaction flags were set on the
+  confrontations, and the sound notes caught music under dialogue.
+- **The composed facecam video:** 7 moments. The new "punchline" category
+  ranked first. Two moments with no dialogue were found from movement and
+  flagged as such. "Gameplay" was correctly not set, since the "game" is an
+  animated film. That run was answered by the backup model (Gemini), which
+  worked.
+
+Limits:
+- Picture quality scored 10 on every moment of both (clean, sharp films),
+  so it is untested on poor footage.
+- The transcript context check found nothing wrong in any AI pick, so its
+  live effect is unproven.
+- Two moments partly sharing lines (under half) can both be listed.
+- Nothing has run on real stream or game footage, and the Phase 4 owner
+  rating is still open.
 
 ### 11.9 as built
 

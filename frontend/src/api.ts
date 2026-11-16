@@ -105,6 +105,17 @@ export interface Moment {
   category: string
   score: number
   subscores: Record<string, number>
+  /** every score the moment has, AI and measured (context blends the AI with the transcript check) */
+  parts: Record<string, number>
+  measured: {
+    context_code?: number
+    context_notes?: string[]
+    audio_quality?: number
+    audio_detail?: { notes: string[] }
+    visual_quality?: number
+    visual_detail?: { notes: string[] }
+  }
+  flags: { no_dialogue?: boolean; reaction?: boolean; gameplay?: boolean }
   reason: string
   excerpt: string
   visual: string | null
@@ -117,6 +128,8 @@ export interface Weights {
   weights: Record<string, number>
   defaults: Record<string, number>
   meaning: Record<string, string>
+  source: Record<string, 'ai' | 'measured' | 'ai+measured'>
+  note: string
 }
 
 export interface Signals {

@@ -147,6 +147,28 @@ the score is explainable.
 - Two clips overlapping more than 50% in time are merged or the lower-scoring
   one is dropped; near-identical clips are also caught by transcript similarity.
 
+### As built in Phase 11.1
+
+- **Moment score.** The score is computed in `moments.viral_score` as the
+  weighted average of the parts a moment has: eight AI parts (the original
+  seven plus "hook") and two measured in `moment_quality.py`, audio and
+  visual quality. Parts a moment never got (old moments, or the transcript
+  check for a moment without speech) are left out rather than counted as
+  zero. The context part averages the AI's view with `context_check`, a
+  punctuation-and-timing check of the transcript around the moment's edges.
+- **Measurements.** The audio measure reads the 16 kHz analysis audio:
+  50 ms frame levels, silence share, clipping, and voice against background.
+  The visual measure grabs five grey frames from the proxy (sharpness by
+  Laplacian variance, brightness, black frames) and takes the still share
+  from the stored motion curve. Each records the reasons it took points off.
+- **Candidates from movement.** Bursts of movement (3× the video's median
+  motion or more) join loud moments as picture-checked candidates.
+- **Duplicates.** Candidates are also duplicates when 60% of their words are
+  shared.
+- **Flags.** The picture check returns reaction and gameplay flags, kept only
+  when the frames were informative.
+- **Storage.** `moments.measured` and `moments.flags` (nullable JSON).
+
 ## 4. Captions
 
 Reference studied: `youtube.com/shorts/t_92QNLlUiE`. Observed style:

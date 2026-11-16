@@ -199,6 +199,9 @@ class Moment(Base):
     # the Smart Duration engine cuts from this (None on moments from older runs)
     core_start: Mapped[float | None] = mapped_column(Float, default=None)
     core_end: Mapped[float | None] = mapped_column(Float, default=None)
+    # Phase 11.1: measured sound/picture quality and the transcript context check; flags such as no_dialogue
+    measured: Mapped[dict[str, Any] | None] = mapped_column(JSON, default=None)
+    flags: Mapped[dict[str, Any] | None] = mapped_column(JSON, default=None)
     category: Mapped[str] = mapped_column(String(30))
     score: Mapped[int] = mapped_column(Integer, index=True)
     # seven 0-10 sub-scores; the viral score is computed from these in code

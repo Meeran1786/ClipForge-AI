@@ -17,6 +17,7 @@ from ..models import Clip, Job, Moment, Project, Track, TranscriptSegment
 from ..exports import blocker as export_blocker
 from ..exports import export_clip, export_folder
 from ..metadata import clean_hashtags
+from ..moments import score_parts
 from ..pipelines import default_link_title, plan_project_music, reselect, reset_analysis, track_info
 from ..rights import download_blocker, write_rights_file
 from ..captions import CaptionStyle
@@ -321,6 +322,10 @@ def moment_to_dict(m: Moment) -> dict:
         "category": m.category,
         "score": m.score,
         "subscores": m.subscores or {},
+        # every score the moment has (AI and measured), with context blended from the AI and the transcript
+        "parts": score_parts(m.subscores or {}, m.measured),
+        "measured": m.measured or {},
+        "flags": m.flags or {},
         "reason": m.reason,
         "excerpt": m.excerpt,
         "visual": m.visual,

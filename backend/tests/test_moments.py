@@ -24,6 +24,11 @@ def scores(value: int = 5, **overrides: int) -> dict[str, int]:
     return {**{k: value for k in SUBSCORES}, **overrides}
 
 
+def expected(c: Candidate) -> int:
+    """The score the scoring rules give this candidate: its AI scores, the transcript check and any measurements."""
+    return m.viral_score(c.subscores, m.clean_weights(None), c.measured)
+
+
 def lines_every(seconds: float, count: int, length: float = 3.0) -> list[Line]:
     return [Line(i + 1, i * seconds, i * seconds + length, f"line {i + 1}") for i in range(count)]
 
@@ -58,17 +63,42 @@ def wait_job_done(client, project_id: int) -> dict:
 
 
 def test_default_weights_cover_every_part_and_sum_to_one():
-    assert set(m.DEFAULT_WEIGHTS) == set(SUBSCORES)
+    assert set(m.DEFAULT_WEIGHTS) == set(m.SCORE_KEYS) == set(SUBSCORES) | set(m.MEASURED)
     assert sum(m.DEFAULT_WEIGHTS.values()) == pytest.approx(1.0)
+    assert set(m.SCORE_SOURCE) == set(m.SCORE_KEYS) and set(m.SUBSCORE_MEANING) == set(m.SCORE_KEYS)
 
 
-def test_viral_score_is_the_weighted_sum_scaled_to_100():
+def test_viral_score_is_the_weighted_average_of_the_parts_a_moment_has():
     w = m.clean_weights(None)
     assert m.viral_score(scores(10), w) == 100
     assert m.viral_score(scores(0), w) == 0
     assert m.viral_score(scores(5), w) == 50
-    # only surprise is high: its weight is 0.18, so 10 there and 0 elsewhere is 18
-    assert m.viral_score(scores(0, surprise=10), w) == 18
+    # only surprise is high and nothing is measured: its share of the AI parts' weights
+    ai_total = sum(w[k] for k in SUBSCORES)
+    assert m.viral_score(scores(0, surprise=10), w) == round(10 * w["surprise"] / ai_total * 10)
+    # with measured quality, all ten parts count
+    full = {"audio_quality": 10, "visual_quality": 10}
+    assert m.viral_score(scores(10), w, full) == 100
+    assert m.viral_score(scores(10), w, {"audio_quality": 0, "visual_quality": 0}) == round(
+        100 * (1 - w["audio_quality"] - w["visual_quality"]))
+
+
+def test_a_moment_from_before_the_new_parts_is_not_marked_down_for_missing_them():
+    old = {k: 8 for k in SUBSCORES if k != "hook"}  # found before "hook" existed, never measured
+    assert m.viral_score(old, m.clean_weights(None)) == 80
+
+
+def test_context_blends_the_ais_view_with_the_transcript_check():
+    parts = m.score_parts(scores(8), {"context_code": 4})
+    assert parts["context"] == 6
+    assert m.score_parts(scores(8))["context"] == 8, "no transcript check (a moment without speech): AI only"
+
+
+def test_weights_saved_before_the_new_parts_get_the_new_parts_defaults():
+    old_saved = {k: m.DEFAULT_WEIGHTS[k] for k in SUBSCORES if k != "hook"}
+    w = m.clean_weights(old_saved)
+    assert set(w) == set(m.SCORE_KEYS) and w["hook"] > 0 and w["audio_quality"] > 0
+    assert sum(w.values()) == pytest.approx(1.0, abs=0.001)
 
 
 def test_weights_are_normalised_and_bad_values_fall_back():
@@ -76,7 +106,7 @@ def test_weights_are_normalised_and_bad_values_fall_back():
     assert sum(w.values()) == pytest.approx(1.0, abs=0.001)
     assert w["entertainment"] == w["surprise"] > w["emotion"]
     assert w["retention"] == 0
-    assert m.clean_weights({k: 0 for k in SUBSCORES}) == m.DEFAULT_WEIGHTS
+    assert m.clean_weights({k: 0 for k in m.SCORE_KEYS}) == m.DEFAULT_WEIGHTS
 
 
 def test_scores_from_the_model_are_clamped():
@@ -225,9 +255,10 @@ def test_detection_reads_the_words_then_checks_the_picture(settings, fake_ai, sa
     [moment] = ranked
     assert moment.visual_checked and moment.visual == "A person reacts at a desk."
     assert moment.subscores == scores(6), "the picture check's scores replace the words-only ones"
-    assert moment.score == 60 and moment.rank == 1 and moment.selected
+    assert moment.score == expected(moment) and moment.rank == 1 and moment.selected
     assert notes == {"text_calls": 1, "visual_calls": 1, "visual_failed": 0, "provider": "fake-ai",
-                     "from_words": 1, "from_sound": 0, "from_sound_kept": 0, "picture_added_nothing": 0,
+                     "from_words": 1, "from_sound": 0, "from_motion": 0, "from_sound_kept": 0,
+                     "from_motion_kept": 0, "picture_added_nothing": 0,
                      "found": 1, "selected": 1, "visually_checked": 1}
     assert not list((tmp_path / "sheets").glob("*.jpg")), "frame sheets are removed after use"
     assert all(0 <= p <= 1 for p, _ in progress)
@@ -238,7 +269,7 @@ def test_a_failed_picture_check_keeps_the_words_only_scores(settings, fake_ai, s
     ranked, notes, _ = run_detection(settings, fake_ai, sample_video, tmp_path)
     [moment] = ranked
     assert not moment.visual_checked and moment.visual is None
-    assert moment.subscores == scores(7) and moment.score == 70
+    assert moment.subscores == scores(7) and moment.score == expected(moment)
     assert notes["visual_failed"] == 1 and notes["visually_checked"] == 0
 
 
@@ -253,7 +284,7 @@ def test_a_picture_that_adds_nothing_never_removes_or_marks_down_a_moment_from_t
     ]}
     ranked, notes, _ = run_detection(settings, fake_ai, sample_video, tmp_path)
     [moment] = ranked
-    assert moment.subscores == scores(7) and moment.score == 70, "the words-only scores stand"
+    assert moment.subscores == scores(7) and moment.score == expected(moment), "the words-only scores stand"
     assert moment.category == "funny"
     assert moment.visual == "A colour test pattern." and moment.visual_checked
     assert notes["picture_added_nothing"] == 1 and notes["found"] == 1
@@ -267,7 +298,7 @@ def test_a_useful_picture_can_lower_a_moment_from_the_words_but_not_delete_it(se
     ]}
     ranked, _, _ = run_detection(settings, fake_ai, sample_video, tmp_path)
     [moment] = ranked
-    assert moment.score == 30
+    assert moment.subscores == scores(3) and moment.score == expected(moment)
 
 
 def test_a_loud_moment_with_no_speech_is_kept_only_if_the_picture_backs_it(settings, fake_ai, sample_video, tmp_path):
@@ -303,7 +334,7 @@ def test_a_loud_moment_with_no_speech_is_kept_only_if_the_picture_backs_it(setti
 def test_no_proxy_means_words_only(settings, fake_ai, tmp_path, sample_video):
     ranked, notes, _ = run_detection(settings, fake_ai, sample_video, tmp_path, proxy=None)
     assert fake_ai.visual_tasks == [] and notes["visual_calls"] == 0
-    assert ranked[0].score == 70 and not ranked[0].visual_checked
+    assert ranked[0].score == expected(ranked[0]) and not ranked[0].visual_checked
 
 
 # ---- through the app -------------------------------------------------------------
@@ -317,7 +348,8 @@ def test_a_new_project_ends_with_scored_moments(client, sample_video, fake_ai):
     assert ready["analysis"]["moments"]["found"] == 1 and ready["analysis"]["moments"]["provider"] == "fake-ai"
     [moment] = client.get(f"/api/projects/{project['id']}/moments").json()
     assert moment["rank"] == 1 and moment["selected"] and moment["visual_checked"]
-    assert moment["score"] == 60 and moment["category"] == "funny"
+    assert moment["score"] == m.viral_score(moment["subscores"], m.clean_weights(None), moment["measured"])
+    assert moment["category"] == "funny" and "audio_quality" in moment["parts"] and "visual_quality" in moment["parts"]
     assert set(moment["subscores"]) == set(SUBSCORES)
     assert moment["reason"] == "They say hello to chat."
     assert "L1 [0:00] hello chat" in fake_ai.text_tasks[0]
@@ -346,7 +378,8 @@ def test_changing_weights_rescores_stored_moments(client, sample_video, fake_ai)
     project = client.post("/api/projects", json={"source": "local", "path": str(sample_video)}).json()
     wait_status(client, project["id"], "ready")
     before = client.get(f"/api/projects/{project['id']}/moments").json()[0]["score"]
-    assert before == 34  # 2 everywhere (20) plus 8 extra points of surprise at weight 0.18
+    moment = client.get(f"/api/projects/{project['id']}/moments").json()[0]
+    assert before == m.viral_score(moment["subscores"], m.clean_weights(None), moment["measured"])
 
     current = client.get("/api/settings/weights").json()
     assert current["weights"] == current["defaults"] and "surprise" in current["meaning"]
