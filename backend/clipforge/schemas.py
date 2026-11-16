@@ -51,6 +51,8 @@ class ProjectOptions(BaseModel):
     layout: Layout = "auto"
     zoom: bool = True  # a slow push-in on each clip's key moment
     part_labels: bool = True  # "PART 1/2" over the opening seconds of connected parts
+    # Phase 9: a small "@creator" on screen for clips from someone else's video
+    credit_tag: bool = True
 
     @model_validator(mode="before")
     @classmethod
@@ -146,6 +148,24 @@ class ClipFraming(BaseModel):
 
 class FinalRender(BaseModel):
     clip_ids: list[int] | None = None  # None = every approved clip
+
+
+class ClipText(BaseModel):
+    """The owner's own wording for a Short. The credit lines stay as the app wrote them unless removed here."""
+
+    title: str = Field(min_length=1, max_length=100)
+    description: str = Field(default="", max_length=5000)
+    hashtags: list[str] = Field(default_factory=list, max_length=15)
+    pinned_comment: str = Field(default="", max_length=300)
+
+
+class WriteAgain(BaseModel):
+    clip_ids: list[int] = Field(min_length=1)
+
+
+class ExportRequest(BaseModel):
+    clip_ids: list[int] | None = None  # None = every approved clip with a final render
+    override: bool = False  # export even if the quality checks failed
 
 
 class ClipReview(BaseModel):

@@ -65,6 +65,7 @@ export function useLiveUpdates(): boolean {
           void qc.invalidateQueries({ queryKey: ['projects'] })
           void qc.invalidateQueries({ queryKey: ['project', event.id] })
           void qc.invalidateQueries({ queryKey: ['stats'] })
+          void qc.invalidateQueries({ queryKey: ['shorts'] })
         }
       }
       ws.onclose = () => {

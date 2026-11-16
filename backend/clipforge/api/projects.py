@@ -14,6 +14,9 @@ from ..context import AppContext, get_ctx
 from ..ingest import detect_platform
 from ..media import VIDEO_EXTENSIONS
 from ..models import Clip, Job, Moment, Project, Track, TranscriptSegment
+from ..exports import blocker as export_blocker
+from ..exports import export_clip, export_folder
+from ..metadata import clean_hashtags
 from ..pipelines import default_link_title, plan_project_music, reselect, reset_analysis, track_info
 from ..rights import download_blocker, write_rights_file
 from ..captions import CaptionStyle
@@ -22,7 +25,10 @@ from ..schemas import (
     ClipFraming,
     ClipMusicChoice,
     ClipReview,
+    ClipText,
+    ExportRequest,
     FinalRender,
+    WriteAgain,
     ProjectCreate,
     ProjectOptions,
     RightsUpdate,
@@ -380,7 +386,7 @@ def update_options(project_id: int, body: ProjectOptions, ctx: AppContext = Depe
                 follow_up = "remix"
             elif changed & FRAME_KEYS:
                 follow_up = "reframe"
-            elif "caption_style" in changed or "part_labels" in changed:
+            elif "caption_style" in changed or "part_labels" in changed or "credit_tag" in changed:
                 follow_up = "caption"
             if follow_up:
                 project.status, project.status_detail = "processing", None
@@ -413,9 +419,109 @@ def clip_to_dict(c: Clip) -> dict:
         "music": c.music,
         "framing": _framing_view(c.framing),
         "final": _final_view(c.final),
+        "meta": c.meta,
+        "exported": c.exported,
+        "export_blocker": export_blocker(c) if c.final else None,
+        "status": c.status,
         "review": c.review or "pending",
         "overridden": bool(c.overridden),
     }
+
+
+shorts_router = APIRouter(prefix="/api/shorts", tags=["shorts"])
+
+
+@shorts_router.get("")
+def list_shorts(ctx: AppContext = Depends(get_ctx)) -> list[dict]:
+    """Every clip that has been approved or rendered, newest project first, with its project's name and rights."""
+    with ctx.session() as s:
+        rows = s.execute(
+            select(Clip, Project).join(Project, Project.id == Clip.project_id)
+            .where((Clip.review == "approved") | Clip.final.is_not(None))
+            .order_by(Project.created_at.desc(), Project.id.desc(), Clip.rank, Clip.part)
+        ).all()
+        return [{**clip_to_dict(c), "project": {"id": p.id, "title": p.title, "rights_status": p.rights_status,
+                                                "creator": p.creator}} for c, p in rows]
+
+
+@router.patch("/{project_id}/clips/{clip_id}/meta")
+def edit_clip_text(project_id: int, clip_id: int, body: ClipText, ctx: AppContext = Depends(get_ctx)) -> dict:
+    """Save the owner's own title, description, hashtags and pinned comment. No AI call."""
+    with ctx.session() as s:
+        clip = s.get(Clip, clip_id)
+        if clip is None or clip.project_id != project_id:
+            raise HTTPException(404, "Clip not found")
+        tags = clean_hashtags(body.hashtags, None) if body.hashtags else []
+        clip.meta = {**(clip.meta or {}), "title": " ".join(body.title.split()),
+                     "description": body.description.strip(), "hashtags": tags,
+                     "pinned_comment": " ".join(body.pinned_comment.split()), "edited": True,
+                     "by": (clip.meta or {}).get("by", "owner")}
+        s.commit()
+        data = clip_to_dict(clip)
+    ctx.bus.publish({"type": "project", "id": project_id})
+    return data
+
+
+@router.post("/{project_id}/metadata")
+def write_again(project_id: int, body: WriteAgain, ctx: AppContext = Depends(get_ctx)) -> dict:
+    """Ask the AI to write the named clips' text again (replacing any edits)."""
+    with ctx.session() as s:
+        project = s.get(Project, project_id)
+        if project is None:
+            raise HTTPException(404, "Project not found")
+        if _busy(s, project_id):
+            raise HTTPException(409, "This project is still processing. Wait for it to finish first.")
+        ids = {c.id for c in s.scalars(select(Clip).where(Clip.project_id == project_id)).all()}
+        if not set(body.clip_ids) <= ids:
+            raise HTTPException(404, "Clip not found")
+        project.status, project.status_detail = "processing", None
+        s.commit()
+        data = project_to_dict(project)
+    ctx.worker.enqueue("text", project_id=project_id, params={"clip_ids": body.clip_ids, "force": True})
+    ctx.bus.publish({"type": "project", "id": project_id})
+    return data
+
+
+@router.post("/{project_id}/export")
+def export(project_id: int, body: ExportRequest, ctx: AppContext = Depends(get_ctx)) -> dict:
+    """Copy finished Shorts with their text and rights record into the project's export folder.
+
+    Every approved clip with a final render, or the clips named. A clip that failed its quality
+    checks is only exported with `override`. Returns what was exported and what was not, and why.
+    """
+    done, refused = [], []
+    with ctx.session() as s:
+        project = s.get(Project, project_id)
+        if project is None:
+            raise HTTPException(404, "Project not found")
+        clips = s.scalars(select(Clip).where(Clip.project_id == project_id).order_by(Clip.rank, Clip.part)).all()
+        if body.clip_ids:
+            chosen = [c for c in clips if c.id in set(body.clip_ids)]
+            if len(chosen) != len(set(body.clip_ids)):
+                raise HTTPException(404, "Clip not found")
+        else:
+            chosen = [c for c in clips if c.review == "approved" and c.final]
+        if not chosen:
+            raise HTTPException(409, "Nothing to export: approve clips and render them as final Shorts first.")
+        folder = None
+        for c in chosen:
+            try:
+                result = export_clip(ctx.settings.exports_dir, project, c, body.override)
+            except ValueError as exc:
+                refused.append({"clip_id": c.id, "rank": c.rank, "part": c.part, "reason": str(exc)})
+                continue
+            except OSError as exc:
+                refused.append({"clip_id": c.id, "rank": c.rank, "part": c.part, "reason": f"Could not write: {exc}"})
+                continue
+            folder = result["folder"]
+            c.exported = {"folder": result["folder"], "video": result["video"], "at": result["exported_at"],
+                          "anyway": bool(body.override and not (c.final.get("qc") or {}).get("passed", True))}
+            c.status = "exported"
+            done.append({"clip_id": c.id, "rank": c.rank, "part": c.part, **result})
+        s.commit()
+    ctx.bus.publish({"type": "project", "id": project_id})
+    return {"exported": done, "refused": refused,
+            "folder": folder or str(export_folder(ctx.settings.exports_dir, project))}
 
 
 def _framing_view(f: dict | None) -> dict | None:

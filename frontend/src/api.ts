@@ -169,6 +169,7 @@ export interface ProjectOptions {
   layout: Layout
   zoom: boolean
   part_labels: boolean
+  credit_tag: boolean
 }
 
 export type MusicMode = 'auto' | 'off' | 'always'
@@ -205,9 +206,50 @@ export interface ClipFinal {
   encoder: string
   layout: string
   loudness: { lufs: number | null; true_peak: number | null; gain_db?: number | null; target_lufs?: number }
-  checks: { name: string; ok: boolean; detail: string }[]
+  checks: { name: string; ok: boolean; detail: string; status?: QcStatus }[]
   passed: boolean
+  score?: number
+  qc?: QualityReport
   rendered_at: string
+}
+
+export type QcStatus = 'ok' | 'warn' | 'fail'
+
+export interface QualityReport {
+  score: number
+  passed: boolean
+  fails: number
+  warnings: number
+  checks: { name: string; label: string; status: QcStatus; detail: string }[]
+  music_gap?: { gap_db: number; speech_db: number; music_in_speech_db: number }
+}
+
+export interface ClipMeta {
+  title: string
+  description: string
+  hashtags: string[]
+  pinned_comment: string
+  by: string
+  notes?: string[]
+  edited: boolean
+  written_at?: string
+}
+
+export interface ClipExport {
+  folder: string
+  video: string
+  at: string
+  anyway: boolean
+}
+
+export interface ExportResult {
+  exported: { clip_id: number; rank: number; part: number; folder: string; video: string; files: string[] }[]
+  refused: { clip_id: number; rank: number; part: number; reason: string }[]
+  folder: string
+}
+
+export interface ShortRow extends Clip {
+  project: { id: number; title: string; rights_status: RightsStatus; creator: string | null }
 }
 
 export interface Track {
@@ -337,6 +379,7 @@ export interface ClipCaptions {
   moved?: string | null
   face_share?: number
   label?: { text: string; where: string } | null
+  tag?: { text: string; where: string } | null
 }
 
 export type DurationMode = 'strict' | 'smart' | 'flexible'
@@ -382,6 +425,10 @@ export interface Clip {
   music: ClipMusic | null
   framing: ClipFraming | null
   final: ClipFinal | null
+  meta: ClipMeta | null
+  exported: ClipExport | null
+  export_blocker: string | null
+  status: 'cut' | 'rendered' | 'exported'
   review: 'pending' | 'approved' | 'rejected'
   overridden: boolean
 }
@@ -534,6 +581,21 @@ export const api = {
       method: 'POST',
       body: JSON.stringify({ clip_ids: clipIds ?? null }),
     }),
+  shorts: () => request<ShortRow[]>('/api/shorts'),
+  editClipText: (
+    projectId: number,
+    clipId: number,
+    text: { title: string; description: string; hashtags: string[]; pinned_comment: string },
+  ) => request<Clip>(`/api/projects/${projectId}/clips/${clipId}/meta`, { method: 'PATCH', body: JSON.stringify(text) }),
+  writeAgain: (projectId: number, clipIds: number[]) =>
+    request<Project>(`/api/projects/${projectId}/metadata`, { method: 'POST', body: JSON.stringify({ clip_ids: clipIds }) }),
+  exportShorts: (projectId: number, clipIds?: number[], override = false) =>
+    request<ExportResult>(`/api/projects/${projectId}/export`, {
+      method: 'POST',
+      body: JSON.stringify({ clip_ids: clipIds ?? null, override }),
+    }),
+  openExports: (projectId?: number) =>
+    post<{ folder: string }>(`/api/system/open-exports${projectId ? `?project_id=${projectId}` : ''}`),
   updateCaptions: (projectId: number, style: CaptionStyle) =>
     request<Project>(`/api/projects/${projectId}/captions`, { method: 'PATCH', body: JSON.stringify(style) }),
   weights: () => request<Weights>('/api/settings/weights'),

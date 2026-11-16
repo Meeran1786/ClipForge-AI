@@ -22,7 +22,7 @@ reaction or an event.
 | Caption start/end checks, part labels clear of captions | Phase 6 | Built |
 | Part labels placed off faces, consistent layout across parts | Phase 8 | Built |
 | Consistent music and audio levels across parts | Phase 7 (music), Phase 8 (levels) | Built (music tested on synthetic tracks only) |
-| Per-part titles and hashtags | Phase 9 | Not built |
+| Per-part titles and hashtags | Phase 9 | Built |
 | Smart Duration panel in the Clip Editor, manual start/end adjustment | Phases 6–8 | Not built |
 
 The engine is `backend/clipforge/duration.py`. It takes a picked moment plus
@@ -98,7 +98,9 @@ Part splitting (Part 1, Part 2, …)
       caption (Phase 8). It avoids faces, not gameplay as such: in split
       screen it sits over the streamer panel's top edge or the game when
       that is where no face is.
-- [ ] Titles and hashtags per part (Phase 9).
+- [x] Titles and hashtags per part (Phase 9): each part gets its own title
+      with "(Part n/m)" added by code, its own hashtags and pinned comment,
+      and a "Part n of m" line in the description.
 
 Caption and video sync (Phase 6)
 - [x] Engine side: the clip always runs past the end of its last word and
@@ -119,6 +121,8 @@ Pre-export validation
       for parts whether each continues cleanly from the one before.
 - [x] A clip that fails is marked "did not pass" and cannot be approved
       without an explicit "Approve anyway".
+- [x] The final Short is checked again on the rendered file (Phase 9), and a
+      clip approved anyway is shown as a warning in its quality report.
 
 Interface
 - [x] Smart Duration panel on New Project, in a project's Clip settings and

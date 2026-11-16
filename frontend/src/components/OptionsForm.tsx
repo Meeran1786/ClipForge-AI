@@ -436,6 +436,20 @@ export function OptionsForm({
                 <span className="hint block">For the first 2.5 seconds, placed clear of faces and captions.</span>
               </span>
             </label>
+            <label className="flex items-start gap-2 text-sm">
+              <input
+                type="checkbox"
+                className="mt-0.5 accent-accent"
+                checked={value.credit_tag}
+                onChange={(e) => set('credit_tag', e.target.checked)}
+              />
+              <span>
+                Credit the creator on screen
+                <span className="hint block">
+                  A small “@name” in a corner for clips from someone else’s video. The description always credits them.
+                </span>
+              </span>
+            </label>
           </div>
         </div>
       </fieldset>

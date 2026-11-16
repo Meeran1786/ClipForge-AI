@@ -3,6 +3,7 @@ import { useEffect, useRef, useState } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
 import { api, LAYOUT_LABEL, type CaptionStyle, type Clip, type Layout, type Project } from '../api'
 import { CaptionStyleForm } from '../components/CaptionStyleForm'
+import { QualityList, ScoreBadge } from '../components/Quality'
 import { CATEGORY_LABEL, duration as clock } from '../format'
 import { Badge, Empty, ErrorNote, JobPanel, PageHeader, Section, Spinner } from '../ui'
 
@@ -176,6 +177,7 @@ function FramingPanel({ project, clip, busy }: { project: Project; clip: Clip; b
               “{caps.label.text}” shows for the first 2.5 s at the {caps.label.where}, clear of faces and captions.
             </li>
           )}
+          {caps?.tag && <li>The credit “{caps.tag.text}” stays on screen at the {caps.tag.where}.</li>}
         </ul>
       )}
     </Section>
@@ -190,7 +192,7 @@ function FinalPanel({ project, clip, busy }: { project: Project; clip: Clip; bus
   return (
     <Section
       title="Final Short"
-      aside={fin?.exists ? <Badge tone={fin.passed ? 'good' : 'bad'}>{fin.passed ? 'Ready' : 'Look at the checks'}</Badge> : null}
+      aside={fin?.exists ? <Badge tone={fin.passed ? 'good' : 'bad'}>{fin.passed ? 'Ready' : 'A check failed'}</Badge> : null}
     >
       {fin?.exists ? (
         <>
@@ -214,14 +216,20 @@ function FinalPanel({ project, clip, busy }: { project: Project; clip: Clip; bus
               </div>
             )}
           </dl>
-          <ul className="mt-3 space-y-1 text-xs">
-            {fin.checks.map((c) => (
-              <li key={c.name} className="flex gap-2">
-                <span className={c.ok ? 'text-good' : 'text-bad'}>{c.ok ? '✓' : '✕'}</span>
-                <span className="text-soft">{c.detail}</span>
-              </li>
-            ))}
-          </ul>
+          {fin.qc && (
+            <div className="mt-3 space-y-2">
+              <ScoreBadge q={fin.qc} />
+              <QualityList q={fin.qc} />
+            </div>
+          )}
+          {clip.meta && (
+            <p className="mt-3 text-sm">
+              <span className="text-soft">Title:</span> {clip.meta.title}{' '}
+              <Link to="/shorts" className="text-xs text-accent hover:underline">
+                Edit text and export
+              </Link>
+            </p>
+          )}
           <div className="mt-4 flex flex-wrap gap-3">
             <a className="btn btn-primary" href={`/api/projects/${project.id}/clips/${clip.id}/final?download=1`}>
               Download

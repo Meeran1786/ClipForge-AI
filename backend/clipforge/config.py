@@ -46,6 +46,7 @@ class Settings(BaseSettings):
     transcript_chunk_seconds: int = 600
 
     fonts_dir: Path = REPO_ROOT / "tools" / "fonts"
+    export_dir: Path | None = None  # finished Shorts are exported here (default: data\exports)
     # OpenCV's YuNet face model (MIT licence), for framing the shot around faces.
     face_model: Path = REPO_ROOT / "tools" / "models" / "face_detection_yunet_2023mar.onnx"
 
@@ -56,6 +57,11 @@ class Settings(BaseSettings):
     @property
     def db_path(self) -> Path:
         return self.data_dir / "clipforge.db"
+
+    @property
+    def exports_dir(self) -> Path:
+        """Where exported Shorts go: CLIPFORGE_EXPORT_DIR, or `exports` in the data folder."""
+        return self.export_dir or self.data_dir / "exports"
 
     @property
     def music_dir(self) -> Path:

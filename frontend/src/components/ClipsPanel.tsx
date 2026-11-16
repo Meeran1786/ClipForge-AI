@@ -4,6 +4,7 @@ import { api, type Clip, type Project } from '../api'
 import { CATEGORY_LABEL, duration as clock } from '../format'
 import { Badge, Empty, ErrorNote, Section } from '../ui'
 import { describeDuration, MODE_INFO } from './OptionsForm'
+import { QualityList, ScoreBadge } from './Quality'
 
 function Check({ ok, label }: { ok: boolean | null | undefined; label: string }) {
   if (ok == null) return null
@@ -129,6 +130,17 @@ function ClipCard({ project, clip }: { project: Project; clip: Clip }) {
                 ? `Music: “${clip.music.title}”${clip.music.measured?.gap_db != null ? `, ${clip.music.measured.gap_db.toFixed(0)} dB under the speech` : ''}${clip.music.credit ? ' · needs a credit line' : ''}.`
                 : `No music: ${clip.music.reason}`}
             </p>
+          )}
+
+          {clip.final?.qc && (
+            <div className="mt-3 rounded-md border border-line px-3 py-2">
+              <div className="mb-1.5 flex flex-wrap items-center gap-2">
+                <ScoreBadge q={clip.final.qc} />
+                {clip.meta && <span className="truncate text-xs text-soft">“{clip.meta.title}”</span>}
+                {clip.exported && <Badge tone="good">Exported</Badge>}
+              </div>
+              <QualityList q={clip.final.qc} />
+            </div>
           )}
 
           <p className="mt-2 text-xs text-faint">
@@ -267,7 +279,16 @@ export function ClipsPanel({ project, clips, busy }: { project: Project; clips: 
               {approved === 0
                 ? 'Approve the clips you want, then render them at 1080×1920.'
                 : `1080×1920 with framing, captions and music, levelled to YouTube’s loudness.`}
-              {rendered > 0 && ` ${rendered} rendered so far; download each from the Clip editor.`}
+              {rendered > 0 && ' '}
+              {rendered > 0 && (
+                <>
+                  {rendered} rendered so far;{' '}
+                  <Link to="/shorts" className="text-accent hover:underline">
+                    review, edit their text and export them
+                  </Link>
+                  .
+                </>
+              )}
             </span>
             {final.isError && <ErrorNote>{final.error.message}</ErrorNote>}
           </div>

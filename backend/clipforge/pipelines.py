@@ -35,7 +35,10 @@ from .analysis.transcript import (
 from .analysis.video_signals import analyse_video
 from .ingest import PLATFORM_LABELS, IngestRefused, source_for
 from .jobs.engine import Pipeline, StageContext, StageDef
-from .captions import build_captions, clip_words, label_size, part_label_text
+from . import metadata as md
+from . import qc
+from .ai.base import AIError
+from .captions import build_captions, clip_words, credit_tag_text, label_size, part_label_text, tag_size
 from .duration import ClipPlan, Context, DurationSettings, Word, plan_moment
 from .framing import (
     LAYOUT_LABELS,
@@ -847,8 +850,11 @@ def _clip_plan(settings, project_id: int, framing: dict | None, W: int, H: int) 
 
 def _render_clip(ctx: StageContext, c: dict, words: list, tracks: dict, options: ProjectOptions,
                  src: tuple[Path, int, int, float, dict], dest: Path, final: bool,
-                 on_progress=None) -> dict:
-    """Frame, caption and mix one clip into `dest`. Returns what was decided and measured."""
+                 on_progress=None, credit: str | None = None) -> dict:
+    """Frame, caption and mix one clip into `dest`. Returns what was decided and measured.
+
+    `credit` is the creator to show on screen (someone else's video), or None.
+    """
     video, W, H, src_fps, media = src
     segments, length = c["segments"], c["duration"]
     out_dir = dest.parent
@@ -857,12 +863,15 @@ def _render_clip(ctx: StageContext, c: dict, words: list, tracks: dict, options:
     style_in = options.caption_style
     style = style_in.resolve()
     label_text = part_label_text(c["part"], c["parts"]) if options.part_labels else ""
+    tag_text = credit_tag_text(credit) if options.credit_tag else ""
     placement = place_text(plan, samples, style.position, style.size, style.outline,
-                           (label_text, *label_size(label_text)) if label_text else None)
+                           (label_text, *label_size(label_text)) if label_text else None,
+                           (tag_text, *tag_size(tag_text)) if tag_text else None)
     lo, hi = segments[0][0], segments[-1][1]
     nearby = [w for w in words if float(w["e"]) > lo and float(w["s"]) < hi]
     result = build_captions(nearby, [list(seg) for seg in segments], length, style_in,
-                            position=placement["caption_position"], label=placement["label"])
+                            position=placement["caption_position"], label=placement["label"],
+                            tag=placement["tag"])
     ass_path = None
     if result.ass:
         ass_path = out_dir / f"{stem}.ass"
@@ -908,7 +917,15 @@ def _render_clip(ctx: StageContext, c: dict, words: list, tracks: dict, options:
         if final and ass_path is not None:
             ass_path.unlink(missing_ok=True)
     return {"result": result, "music": music, "placement": placement, "plan": plan, "style": style_in,
-            "loudness": loudness, "fps": fps}
+            "loudness": loudness, "fps": fps, "speech": speech, "gain": gain, "channels": channels,
+            "has_audio": has_audio, "music_used": spec is not None}
+
+
+def _credit(project: Project) -> str | None:
+    """Who to credit on screen and in the description: anyone's video but the owner's own."""
+    if project.rights_status == "own":
+        return None
+    return project.creator or (project.source_meta or {}).get("creator")
 
 
 def _clip_rows(s: Session, project_id: int) -> list[dict]:
@@ -940,6 +957,7 @@ def _captions(ctx: StageContext) -> dict:
         clips = _clip_rows(s, ctx.project_id)
         words = _words(s, ctx.project_id)
         tracks = {t.id: t for t in load_track_infos(s)}
+        credit = _credit(project)
     src = _render_source(ctx)
     out_dir = _clip_dir(ctx.settings, ctx.project_id)
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -950,7 +968,7 @@ def _captions(ctx: StageContext) -> dict:
         if not c["segments"] or c["duration"] < 1.0:
             continue
         dest = out_dir / f"clip_{c['rank']:02d}_part{c['part']}_vertical.mp4"
-        done = _render_clip(ctx, c, words, tracks, options, src, dest, final=False)
+        done = _render_clip(ctx, c, words, tracks, options, src, dest, final=False, credit=credit)
         result, placement = done["result"], done["placement"]
         with ctx.session() as s:
             clip = s.get(Clip, c["id"])
@@ -959,7 +977,8 @@ def _captions(ctx: StageContext) -> dict:
                 clip.music = done["music"]
                 clip.captions = {**result.report(), "lines": result.lines, "style": done["style"].model_dump(),
                                  "position": placement["caption_position"], "moved": placement["caption_note"],
-                                 "face_share": placement["caption_face_share"], "label": placement["label"]}
+                                 "face_share": placement["caption_face_share"], "label": placement["label"],
+                                 "tag": placement["tag"]}
                 s.commit()
 
     with ctx.session() as s:  # the summary covers every clip, not just the ones rendered this time
@@ -994,6 +1013,101 @@ def _safe_name(text: str) -> str:
     return "_".join(cleaned.split())[:60] or "clip"
 
 
+def _write_text(ctx: StageContext) -> dict:
+    """Write each Short's title, description, hashtags and pinned comment. One AI request for all of them.
+
+    The final render writes text only for clips that have none; "Write again" (`force`) rewrites the
+    named clips, including text the owner edited. Without an AI, plain text is made from the clip.
+    """
+    wanted = {int(i) for i in (ctx.params.get("clip_ids") or [])}
+    force = bool(ctx.params.get("force"))
+    with ctx.session() as s:
+        project = s.get(Project, ctx.project_id)
+        rows = [c for c in s.scalars(select(Clip).where(Clip.project_id == ctx.project_id)
+                                     .order_by(Clip.rank, Clip.part, Clip.id)).all()
+                if (c.id in wanted if wanted else c.review == "approved")]
+        rows = [c for c in rows if force or not c.meta]
+        moments = {m.id: m for m in s.scalars(select(Moment).where(Moment.project_id == ctx.project_id)).all()}
+        meta = project.source_meta or {}
+        source = md.Source(
+            title=project.title, original_title=meta.get("title"), creator=project.creator,
+            channel=meta.get("creator"), platform=project.source_kind, url=project.source_url,
+            rights_status=project.rights_status, language=((project.analysis or {}).get("transcript") or {}).get("language"),
+        )
+        clips = [
+            md.ClipText(
+                id=c.id, category=c.category, reason=(moments.get(c.moment_id).reason if moments.get(c.moment_id) else None),
+                said=" ".join(ln["text"] for ln in (c.captions or {}).get("lines") or []) or " ".join(
+                    w["w"] for w in _words(s, ctx.project_id) if c.start is not None
+                    and c.start <= float(w["s"]) <= (c.end or 0)),
+                duration=float(c.duration or 0), part=c.part or 1, parts=c.parts or 1,
+            )
+            for c in rows
+        ]
+        credits = {c.id: (c.music or {}).get("credit") if (c.music or {}).get("used") else None for c in rows}
+    if not clips:
+        ctx.report(1.0, "Every clip already has its text")
+        return {"written": 0}
+    ctx.report(0.1, f"Writing titles and descriptions for {len(clips)} clip(s)")
+    try:
+        reasoner = make_reasoner(ctx.settings)
+    except AIError:
+        reasoner = None
+    written = md.write(reasoner, clips, source, credits, check=ctx.check)
+    with ctx.session() as s:
+        for cid, w in written.items():
+            clip = s.get(Clip, cid)
+            if clip is not None:
+                clip.meta = {"title": w.title, "description": w.description, "hashtags": w.hashtags,
+                             "pinned_comment": w.pinned_comment, "by": w.by, "notes": w.notes,
+                             "written_at": iso(utcnow()), "edited": False}
+        s.commit()
+    ctx.publish_project()
+    plain = sum(1 for w in written.values() if w.by == "plain")
+    ctx.report(1.0, f"Text written for {len(written)} clip(s)" + (f", {plain} without the AI" if plain else ""))
+    return {"written": len(written), "plain": plain}
+
+
+def loudness_verdict(loud: dict) -> tuple[bool, str] | None:
+    """Whether the final loudness is right, and how to say so."""
+    if loud.get("lufs") is None:
+        return None
+    # quieter than the target is accepted when it is the peak limit that held it back (a very loud,
+    # dense mix) or the boost limit (a very quiet one); YouTube turns loud Shorts down, never quiet ones up
+    boosted_most = (loud.get("gain_db") or 0) >= MAX_BOOST_DB
+    held_back = (loud.get("ceiling_db") or 0) < 20 * math.log10(PEAK_CEILING) - 0.01 or boosted_most
+    within = abs(loud["lufs"] - TARGET_LUFS) <= FINAL_TOLERANCE_LU
+    good = within or (held_back and loud["lufs"] < TARGET_LUFS)
+    detail = f"{loud['lufs']:.1f} LUFS (target {TARGET_LUFS:.0f})"
+    if good and not within:
+        detail += (f", the most it may be raised is {MAX_BOOST_DB:.0f} dB" if boosted_most
+                   else ", held back to keep the peaks under the limit")
+    return good, detail
+
+
+def check_final(settings, dest: Path, c: dict, extra: dict, done: dict, src: tuple, rights: str,
+                others: list[list[str]]) -> tuple[dict, dict, dict]:
+    """Probe, measure and check a rendered Short. Returns (probe facts, loudness, quality report)."""
+    video, _W, _H, _fps, media = src
+    info = probe_media(settings, dest)
+    after = measure_loudness(settings, dest, [], whole_file=True) if info.get("has_audio") else None
+    loud = {**(done["loudness"] or {}), "lufs": (after or {}).get("lufs"), "true_peak": (after or {}).get("true_peak")}
+    scan = qc.scan_file(settings, dest, float(info.get("duration") or c["duration"]), bool(info.get("has_audio")))
+    gap = None
+    if info.get("has_audio") and done["has_audio"]:
+        gap = qc.music_gap(settings, dest, video, c["segments"], done["speech"], done["gain"] or 0.0,
+                           done["channels"])
+    quality = qc.run_checks(
+        info=info, scan=scan, clip_duration=c["duration"], out_size=(OUT_W, OUT_H), loudness=loud,
+        loudness_ok=loudness_verdict(loud), music_used=done["music_used"], gap=gap,
+        expect_sound=done["has_audio"] or done["music_used"], captions=extra["captions"], report=extra["report"],
+        valid=extra["valid"], overridden=extra["overridden"], others=others, rights_status=rights,
+    )
+    if gap is not None:
+        quality["music_gap"] = gap
+    return info, loud, quality
+
+
 def _final(ctx: StageContext) -> dict:
     """Render each chosen clip as a finished 1080x1920 Short with captions, music and levelled loudness. No AI.
 
@@ -1005,6 +1119,11 @@ def _final(ctx: StageContext) -> dict:
         options = ProjectOptions(**normalise_options(project.options))
         title = project.title or f"project_{ctx.project_id}"
         rights = project.rights_status
+        credit = _credit(project)
+        all_rows = {c.id: c for c in s.scalars(select(Clip).where(Clip.project_id == ctx.project_id)).all()}
+        extra = {i: {"captions": dict(r.captions) if r.captions else None, "report": dict(r.report or {}),
+                     "valid": bool(r.valid), "overridden": bool(r.overridden), "moment_id": r.moment_id}
+                 for i, r in all_rows.items()}
         clips = [c for c in _clip_rows(s, ctx.project_id)
                  if (c["id"] in wanted if wanted else c["review"] == "approved")]
         words = _words(s, ctx.project_id)
@@ -1028,38 +1147,20 @@ def _final(ctx: StageContext) -> dict:
             continue
         name = f"{_safe_name(title)}_{c['rank']:02d}" + (f"_part{c['part']}of{c['parts']}" if c["parts"] > 1 else "")
         dest = out_dir / f"{name}.mp4"
-        done = _render_clip(ctx, c, words, tracks, options, src, dest, final=True, on_progress=tick)
-        info = probe_media(ctx.settings, dest)
-        after = measure_loudness(ctx.settings, dest, [], whole_file=True) if info.get("has_audio") else None
-        loud = {**(done["loudness"] or {}), "lufs": (after or {}).get("lufs"), "true_peak": (after or {}).get("true_peak")}
-        checks = [
-            {"name": "size", "ok": (info["width"], info["height"]) == (OUT_W, OUT_H),
-             "detail": f"{info['width']}x{info['height']}"},
-            {"name": "codecs", "ok": info["video_codec"] == "h264" and info["audio_codec"] in ("aac", None),
-             "detail": f"{info['video_codec']} / {info['audio_codec'] or 'no sound'}"},
-            {"name": "length", "ok": abs((info.get("duration") or 0) - c["duration"]) <= 0.15,
-             "detail": f"{info.get('duration') or 0:.2f} s for a {c['duration']:.2f} s clip"},
-        ]
-        if loud.get("lufs") is not None:
-            # quieter than the target is accepted when it is the peak limit that held it back (a very loud,
-            # dense mix) or the boost limit (a very quiet one); YouTube turns loud Shorts down, never quiet ones up
-            held_back = ((loud.get("ceiling_db") or 0) < 20 * math.log10(PEAK_CEILING) - 0.01
-                         or (loud.get("gain_db") or 0) >= MAX_BOOST_DB)
-            within = abs(loud["lufs"] - TARGET_LUFS) <= FINAL_TOLERANCE_LU
-            ok = within or (held_back and loud["lufs"] < TARGET_LUFS)
-            detail = f"{loud['lufs']:.1f} LUFS (target {TARGET_LUFS:.0f})"
-            if ok and not within:
-                detail += ", held back to keep the peaks under the limit" if (loud.get("gain_db") or 0) < MAX_BOOST_DB \
-                    else f", the most it may be raised is {MAX_BOOST_DB:.0f} dB"
-            checks.append({"name": "loudness", "ok": ok, "detail": detail})
-            checks.append({"name": "true_peak", "ok": (loud.get("true_peak") or -99) <= MAX_TRUE_PEAK,
-                           "detail": f"{loud.get('true_peak')} dBTP"})
+        done = _render_clip(ctx, c, words, tracks, options, src, dest, final=True, on_progress=tick, credit=credit)
+        ctx.report(base + 0.95 / len(clips), f"Checking Short {n + 1} of {len(clips)}")
+        others = [qc.words_of(e["captions"]) for i, e in extra.items()
+                  if i != c["id"] and (e["moment_id"] is None or e["moment_id"] != extra[c["id"]]["moment_id"])]
+        info, loud, quality = check_final(ctx.settings, dest, c, extra[c["id"]], done, src, rights, others)
         record = {
             "file": str(dest), "name": dest.name, "size_bytes": dest.stat().st_size, "width": info["width"],
             "height": info["height"], "fps": done["fps"], "duration": info.get("duration"), "encoder": encoder,
             "video_codec": info["video_codec"], "audio_codec": info["audio_codec"], "loudness": loud,
             "layout": done["plan"].layout, "caption_position": done["placement"]["caption_position"],
-            "label": done["placement"]["label"], "checks": checks, "passed": all(x["ok"] for x in checks),
+            "label": done["placement"]["label"], "tag": done["placement"]["tag"], "qc": quality,
+            "checks": [{"name": x["label"], "ok": x["status"] != "fail", "status": x["status"], "detail": x["detail"]}
+                       for x in quality["checks"]],
+            "passed": quality["passed"], "score": quality["score"],
             "rights_status": rights, "rendered_at": iso(utcnow()),
         }
         made += 1
@@ -1068,6 +1169,7 @@ def _final(ctx: StageContext) -> dict:
             if clip is not None:
                 clip.final = record
                 clip.status = "rendered"
+                clip.exported = None  # an earlier export is of the previous render
                 s.commit()
         ctx.publish_project()
 
@@ -1133,6 +1235,9 @@ def _ingest_finished(s: Session, job: Job) -> None:
         elif failed_stage == "final":
             project.status = "ready"
             project.status_detail = f"The final Shorts were not rendered: {job.error}. Use Retry to try again."
+        elif failed_stage == "text":
+            project.status = "ready"
+            project.status_detail = f"The titles and descriptions were not written: {job.error}. Use Retry to try again."
         else:
             project.status = "failed"
             project.status_detail = job.error
@@ -1283,9 +1388,14 @@ PIPELINES: dict[str, Pipeline] = {
     "remix": Pipeline(stages=[*_MUSIC, *_CAPTION], on_finish=_ingest_finished, on_retry=_ingest_retried),
     # changing the layout or zoom plans the framing again (faces already found are reused) and re-renders
     "reframe": Pipeline(stages=[*_FRAME, *_CAPTION], on_finish=_ingest_finished, on_retry=_ingest_retried),
-    # the finished 1080x1920 Shorts, for the approved clips or the ones named in the job
-    "final": Pipeline(stages=[StageDef("final", "Render final Shorts", _final)],
+    # the finished 1080x1920 Shorts, for the approved clips or the ones named in the job:
+    # their text first (only clips that have none), then the render and its quality checks
+    "final": Pipeline(stages=[StageDef("text", "Write titles and descriptions", _write_text),
+                              StageDef("final", "Render and check final Shorts", _final)],
                       on_finish=_ingest_finished, on_retry=_ingest_retried),
+    # write the text again for the named clips (asks the AI)
+    "text": Pipeline(stages=[StageDef("text", "Write titles and descriptions", _write_text)],
+                         on_finish=_ingest_finished, on_retry=_ingest_retried),
     "ingest_url": Pipeline(
         stages=[
             StageDef("metadata", "Look up the video", _metadata, max_attempts=3),

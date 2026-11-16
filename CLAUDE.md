@@ -40,6 +40,9 @@ and what was not done. Never call a feature done because its screen exists.
 | `backend/clipforge/captions.py` | Word-synced captions: lines, styles, ASS output, timing and placement checks |
 | `backend/clipforge/music.py` | Licensed music: licence rules, track analysis, mood matching, beat alignment, ducking envelope |
 | `backend/clipforge/framing.py` | Faces, facecam, layouts, camera path, zoom, keeping text off faces; the frame compositor |
+| `backend/clipforge/qc.py` | Quality checks on the rendered file and the quality score |
+| `backend/clipforge/metadata.py` | Titles, descriptions, hashtags, pinned comment; credit lines by code |
+| `backend/clipforge/exports.py` | Export: video, `.txt`, `.json` sidecar and `rights.json` into the export folder |
 | `backend/clipforge/rights.py` | Rights record and the download gate |
 | `frontend/src/` | React + TypeScript + Tailwind dashboard |
 | `data/` | Database, project files, speech models (not in git) |
@@ -52,7 +55,10 @@ and what was not done. Never call a feature done because its screen exists.
 Run from the repository root (`D:\ClipForge-AI`).
 
 - Tests: `backend\.venv\Scripts\python -m pytest -q` from `backend`
-  (about 390 tests, five to eight minutes).
+  (about 420 tests, five to thirteen minutes). Their temporary files go to
+  `D:\tmp\cf_pytest` (or `CLIPFORGE_TEST_TMP`): C: is too full, and a low C:
+  once made unrelated tests time out. Do not run the suite while a live
+  transcription is running; together they ran out of memory.
 - Dashboard build, after any frontend change: `npm run build` in `frontend`.
   The server serves `frontend/dist`; it does not hot-reload.
 - Start the app: `clipforge.cmd` (`--port`, `--no-browser`, `--data-dir`).
@@ -67,9 +73,16 @@ Run from the repository root (`D:\ClipForge-AI`).
 - **Tests have no real side effects.** `tests/conftest.py` replaces the
   platforms, the speech model, the AI and the file dialog with stand-ins.
   New outward-facing code needs a stand-in there too.
-- **Cutting and captioning never call the AI.** Changing duration settings
-  re-cuts from stored moments; changing the caption style re-captions without
-  re-cutting; only "Pick moments again" asks the AI.
+- **Cutting, captioning, framing and rendering never call the AI.** Changing
+  duration settings re-cuts from stored moments; changing the caption style
+  re-captions without re-cutting. The AI is asked only by "Pick moments
+  again", and for a Short's text: once per final render for clips without text
+  (one request for all of them), and by "Write again".
+- **Credit lines are written by code, never by the AI.** The creator credit
+  and original link, the music credit, part numbers and #Shorts are added
+  after the AI answers (`metadata.py`); links from the AI are removed.
+- **Quality checks measure the rendered file** (`qc.py`); a fail blocks export
+  unless the owner exports anyway.
 - **Captions show what was heard.** Never correct, add or drop a word; flag
   unsure ones.
 - **No track without a complete licence record is ever used.** The check is

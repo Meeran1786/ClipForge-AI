@@ -26,13 +26,32 @@ from clipforge.jobs import engine as engine_module
 from clipforge.moments import SUBSCORES
 
 
+OPENED_FOLDERS: list[Path] = []  # folders the app asked to show in the file manager (never really opened)
+
+
+def pytest_configure(config):
+    """Test files (renders included) go on D: when this machine has one: C: is nearly full.
+
+    Set CLIPFORGE_TEST_TMP to choose another folder; it is emptied at the start of each run.
+    """
+    import os
+
+    if config.option.basetemp:
+        return
+    chosen = os.environ.get("CLIPFORGE_TEST_TMP") or (r"D:\tmp\cf_pytest" if Path("D:/").exists() else None)
+    if chosen:
+        config.option.basetemp = chosen
+
+
 @pytest.fixture(autouse=True)
 def _no_real_side_effects(monkeypatch):
     def _refuse(*_a, **_k):
         raise AssertionError("tests must not open a real file dialog")
 
+    OPENED_FOLDERS.clear()
     monkeypatch.setattr(system_api, "pick_video_file", _refuse)
     monkeypatch.setattr(system_api, "pick_audio_file", _refuse)
+    monkeypatch.setattr(system_api, "open_in_explorer", lambda folder: OPENED_FOLDERS.append(folder))
     monkeypatch.setattr("webbrowser.open", lambda *_a, **_k: False)
     monkeypatch.setattr(engine_module, "RETRY_DELAY_SECONDS", 0.01)
 
@@ -128,6 +147,9 @@ class FakeReasoner:
     def __init__(self) -> None:
         self.text_tasks: list[str] = []
         self.visual_tasks: list[str] = []
+        self.meta_tasks: list[str] = []
+        self.meta_answer = None  # callable(clip_ids) -> dict, or None for the default
+        self.fail_meta: Exception | None = None
         self.images_seen: list[list[str]] = []
         self.text_answer = None  # callable(line_numbers) -> dict, or None for the default
         self.visual_answer = None  # callable(moment_ids) -> dict, or None for the default
@@ -137,6 +159,18 @@ class FakeReasoner:
     def ask_json(self, task, schema, images=None, check=None):
         if check:
             check()
+        if "clips" in schema.get("properties", {}):  # titles and descriptions
+            self.meta_tasks.append(task)
+            if self.fail_meta:
+                raise self.fail_meta
+            ids = [int(n) for n in re.findall(r"^Clip (\d+):", task, flags=re.M)]
+            if self.meta_answer:
+                return self.meta_answer(ids)
+            return {"clips": [
+                {"id": i, "title": "Chat gets a warm hello", "description": "The streamer greets chat.",
+                 "hashtags": ["#hello", "chat", "#Shorts"], "pinned_comment": "How do you greet your chat?"}
+                for i in ids
+            ]}
         if images:
             self.visual_tasks.append(task)
             self.images_seen.append([p.name for p in images])

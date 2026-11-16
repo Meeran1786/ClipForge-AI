@@ -96,6 +96,7 @@ def create_app(
     app.include_router(system_api.router)
     app.include_router(music_api.router)
     app.include_router(projects_api.router)
+    app.include_router(projects_api.shorts_router)
     app.include_router(jobs_api.router)
 
     @app.websocket("/api/ws")

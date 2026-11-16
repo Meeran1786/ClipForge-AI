@@ -498,7 +498,7 @@ Not done, and limits:
   renders, but the gate ran with the automatic choice (split screen and full
   screen).
 
-## Phase 9 — Quality control and export
+## Phase 9 — Quality control and export — done 2026-11-17
 
 - All QC checks, quality score, failure reasons on the clip card.
 - Metadata generation (title, description, hashtags, pinned comment).
@@ -506,6 +506,87 @@ Not done, and limits:
 
 Gate: deliberately broken renders (black bars, missing audio, loud music) are
 caught; end-to-end run from one URL to a folder of approved Shorts.
+
+What was built:
+
+- `qc.py`: sixteen checks on every final Short, measured on the rendered file.
+  Size and codecs, length, black bars, black frames, frozen picture, sound
+  present and not silent, true peak, loudness, music under the speech, long
+  silence, caption checks, unclear caption words, whole-sentence cut, repeat
+  of another clip, and rights. A score of 100, less 30 per fail and 8 per
+  warning. A fail stops export unless the owner exports anyway.
+- The music check works on the file itself. The clip's own sound reaches the
+  Short unchanged apart from one gain, so taking it away from the file's sound
+  leaves only what was added; its level while someone speaks is the gap.
+- `metadata.py`: one AI request writes the title, a short description, 3–6
+  hashtags and a pinned comment for every clip being rendered. Code then adds
+  everything that must be right: the creator credit and original link first
+  in the description (any video but the owner's own), the music credit a CC BY
+  track needs, "(Part n/m)" and a part line, #Shorts, and YouTube's length
+  limits. Without an AI, plain text is made from the words said, and the clip
+  says so. The owner can edit the text or ask for it again.
+- An on-screen creator credit ("@Name") for the whole clip, in a corner clear
+  of faces, captions and the PART label (project setting, on by default).
+- `exports.py`: approved, rendered Shorts are copied to the export folder
+  (`data\exports\NNN_project`, or `CLIPFORGE_EXPORT_DIR`). Each gets its `.mp4`,
+  a paste-ready `.txt` and a `.json` sidecar (text, rights record, music
+  licence, quality report, source times), with the project's `rights.json`
+  beside them. Unconfirmed rights are exported with a warning in both files.
+- The final job is now: write the text (only clips without any), render,
+  check. The Generated Shorts page lists every approved or rendered clip with
+  its quality report, editable text, approve/reject, render again, export,
+  download, and per project "Export all ready" and "Open folder". Clip cards
+  show the score and the reasons for any problem.
+
+Gate results:
+
+- **Broken renders are caught.** One real final Short from the end-to-end
+  run passed every check (score 100). Deliberately broken copies of it all
+  failed, for the right reason:
+  - black bars (12% top and bottom): fail;
+  - sound track removed: fail;
+  - silent sound track: three fails;
+  - the same clip rendered with music 4 dB louder than the speech: fail.
+
+  The automated tests add black frames, a frozen picture, wrong size and
+  length, and quiet music that must pass.
+- **One link to a folder of approved Shorts.** A YouTube link to Tears of
+  Steel (CC BY 3.0, rights recorded as licensed with the source) went through
+  download, analysis, the real AI pick (4 moments, 3 told in two parts, so 7
+  clips), framing, captions, approval, the final render with real AI text,
+  and export. The final step took 2.8 minutes for 7 Shorts (133 s of video),
+  writing included. The folder holds 7 MP4s at 1080×1920, 7 `.txt`, 7 `.json`
+  and `rights.json`. Every Short passed: four scored 100, three 92 (a warning
+  for unclear caption words, or loudness 1.1 LU under target). The titles say
+  what happens ("He finally admits he's freaked out by the robot hand (Part
+  1/2)"), every description starts with the credit and the original link, and
+  #Shorts is always there.
+- 417 automated tests pass. They use stand-ins for the AI and the platforms,
+  and real renders for the quality checks.
+
+Faults found and fixed along the way:
+
+- The new text stage was first named like the link lookup stage and silently
+  replaced it, so link projects kept their placeholder title (caught by the
+  tests).
+- A title opening with a quotation lost its first quote mark.
+- Exported file names repeated the part number.
+- The loud-music message said "−4 dB under the speech" instead of "4 dB louder".
+- Transcription ran out of memory when the test suite ran at the same time
+  with C: almost full. Tests now keep their files on D:.
+
+Not done, and limits:
+
+- **Extreme close-ups.** When a face is bigger than the frame (cut off top and
+  bottom), the face model does not find it, so captions can sit over it and
+  the checks do not notice. I saw one such frame in the gate.
+- The title and description are only as good as the transcript and the AI's
+  reading of it. They should be read before publishing; the app does not
+  check facts.
+- The hashtags always include #Shorts, even after the owner edits them.
+- The duplicate check compares the words of a project's clips, not clips from
+  different videos.
+- Export copies files; nothing is uploaded (Phase 10).
 
 ## Phase 10 — YouTube publishing
 

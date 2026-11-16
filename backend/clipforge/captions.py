@@ -322,7 +322,25 @@ def part_label_text(part: int, parts: int) -> str:
     return f"PART {part}/{parts}" if parts > 1 else ""
 
 
-def to_ass(lines: list[Line], style: Style, label: dict[str, Any] | None = None) -> str:
+TAG_STYLE = Style(font="Montserrat ExtraBold", size=36, text_color="#FFFFFF", highlight_color="#FFFFFF",
+                  emphasis_color=None, outline=3, shadow=1, position=6, uppercase=False, words_per_line=4,
+                  animation="none", speed=1.0)
+
+
+def credit_tag_text(creator: str | None) -> str:
+    name = " ".join((creator or "").split())
+    if not name:
+        return ""
+    return name if name.startswith("@") else "@" + name.replace(" ", "")
+
+
+def tag_size(text: str) -> tuple[float, float]:
+    """Width and height in 1080x1920 pixels of the creator credit, outline included."""
+    return text_width(text, TAG_STYLE) + 2 * TAG_STYLE.outline, TAG_STYLE.size * 1.25
+
+
+def to_ass(lines: list[Line], style: Style, label: dict[str, Any] | None = None,
+           tag: dict[str, Any] | None = None, length: float | None = None) -> str:
     y = round(FRAME_H * style.position / 100)
     pop = style.animation == "pop"
     grow_ms = max(20, round(70 / style.speed))
@@ -345,6 +363,9 @@ def to_ass(lines: list[Line], style: Style, label: dict[str, Any] | None = None)
         f"5,{SIDE_MARGIN},{SIDE_MARGIN},0,1",
         f"Style: Label,{LABEL_STYLE.font},{LABEL_STYLE.size},&H00FFFFFF,&H00FFFFFF,&H00000000,"
         f"{_ass_colour('#000000', shadow_alpha)},0,0,0,0,100,100,2,0,1,{LABEL_STYLE.outline},{LABEL_STYLE.shadow},"
+        "5,0,0,0,1",
+        f"Style: Tag,{TAG_STYLE.font},{TAG_STYLE.size},&H22FFFFFF,&H22FFFFFF,&H00000000,"
+        f"{_ass_colour('#000000', shadow_alpha)},0,0,0,0,100,100,0,0,1,{TAG_STYLE.outline},{TAG_STYLE.shadow},"
         "5,0,0,0,1",
         "",
         "[Events]",
@@ -376,6 +397,11 @@ def to_ass(lines: list[Line], style: Style, label: dict[str, Any] | None = None)
         events.append(
             f"Dialogue: 1,{_ass_time(0)},{_ass_time(until)},Label,,0,0,0,,"
             f"{{\\pos({int(label['x'])},{int(label['y'])})\\fad(150,300)}}{_escape(label['text'].upper())}"
+        )
+    if tag and tag.get("text") and length:
+        events.append(
+            f"Dialogue: 1,{_ass_time(0)},{_ass_time(length)},Tag,,0,0,0,,"
+            f"{{\\pos({int(tag['x'])},{int(tag['y'])})}}{_escape(tag['text'])}"
         )
     return header + "\n" + "\n".join(events) + "\n"
 
@@ -467,16 +493,18 @@ def check_lines(lines: list[Line], words: list[CWord], style: Style, clip_length
 
 def build_captions(
     words: list[dict[str, Any]], segments: list[list[float]], clip_length: float, style_in: CaptionStyle,
-    position: int | None = None, label: dict[str, Any] | None = None,
+    position: int | None = None, label: dict[str, Any] | None = None, tag: dict[str, Any] | None = None,
 ) -> CaptionResult:
     """Captions for one clip. `position` overrides the style's height (framing moves it off faces);
-    `label` is the PART label to show over the opening seconds ({text, x, y, until})."""
+    `label` is the PART label to show over the opening seconds ({text, x, y, until}); `tag` is the
+    creator credit shown for the whole clip ({text, x, y})."""
     style = style_in.resolve()
     if position is not None:
         style = replace(style, position=int(position))
     cwords = clip_words(words, segments)
     if not style_in.enabled:
-        return CaptionResult(ass=to_ass([], style, label) if label else "", lines=[],
+        extras = label or tag
+        return CaptionResult(ass=to_ass([], style, label, tag, clip_length) if extras else "", lines=[],
                              checks=[CaptionCheck("captions", True, "Captions are turned off.")],
                              word_count=len(cwords))
     lines = build_lines(cwords, style, clip_length)
@@ -485,7 +513,7 @@ def build_captions(
         for w in cwords if w.p < LOW_CONFIDENCE
     ]
     return CaptionResult(
-        ass=to_ass(lines, style, label) if lines or label else "",
+        ass=to_ass(lines, style, label, tag, clip_length) if lines or label or tag else "",
         lines=[
             {"start": ln.start, "end": ln.end, "text": _shown(ln.text, style),
              "words": [{"s": w.s, "e": w.e, "w": w.text, "p": round(w.p, 2)} for w in ln.words]}

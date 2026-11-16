@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+import os
 import platform
 import shutil
 import subprocess
 import sys
 from functools import lru_cache
+from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import FileResponse
@@ -15,6 +17,7 @@ from sqlalchemy import func, select
 from .. import __version__
 from ..captions import FONTS, PRESET_LABELS, PRESETS
 from ..context import AppContext, get_ctx
+from ..exports import export_folder
 from ..jobs.engine import job_to_dict
 from ..media import VIDEO_EXTENSIONS, tool_version
 from ..models import Clip, Job, Moment, Project, Setting
@@ -218,6 +221,33 @@ def pick_audio() -> dict:
         return {"path": pick_audio_file()}
     except (RuntimeError, OSError, subprocess.TimeoutExpired) as exc:
         raise HTTPException(500, f"Could not open the file dialog: {exc}") from exc
+
+
+def open_in_explorer(folder: Path) -> None:
+    """Show a folder in the file manager on this computer."""
+    if sys.platform == "win32":
+        os.startfile(str(folder))  # noqa: S606 - the owner's own folder, on their own machine
+    else:
+        subprocess.Popen(["xdg-open" if sys.platform.startswith("linux") else "open", str(folder)])
+
+
+@router.post("/system/open-exports")
+def open_exports(project_id: int | None = None, ctx: AppContext = Depends(get_ctx)) -> dict:
+    """Open the export folder (a project's own, when given). Only folders inside it can be opened."""
+    root = ctx.settings.exports_dir
+    folder = root
+    if project_id is not None:
+        with ctx.session() as s:
+            project = s.get(Project, project_id)
+            if project is None:
+                raise HTTPException(404, "Project not found")
+            folder = export_folder(root, project)
+    folder.mkdir(parents=True, exist_ok=True)
+    try:
+        open_in_explorer(folder)
+    except OSError as exc:
+        raise HTTPException(500, f"Could not open the folder: {exc}") from exc
+    return {"folder": str(folder)}
 
 
 @router.post("/system/pick-file")

@@ -1,6 +1,6 @@
 # ClipForge AI — Project status
 
-Updated 2026-11-16, after Phase 8. Detail for each phase is in
+Updated 2026-11-17, after Phase 9. Detail for each phase is in
 [ROADMAP.md](ROADMAP.md); feature items are in [TASKS.md](TASKS.md).
 
 ## Where it stands
@@ -10,9 +10,13 @@ it, has an AI pick and score the best moments, and cuts each one into a clip
 on whole sentences. Each clip is framed for 9:16: split screen when the
 streamer has a facecam, otherwise full screen following the speaker's face.
 It gets word-synced captions kept off faces, a PART label on connected parts,
-and licensed background music. Approved clips are rendered as finished
-1080×1920 Shorts levelled to YouTube's loudness, ready to download. Quality
-checks, titles and descriptions, export and publishing are still to come.
+an on-screen credit for someone else's video, and licensed background music.
+
+Approved clips are rendered as finished 1080×1920 Shorts levelled to
+YouTube's loudness. Each one gets AI-written title, description, hashtags and
+pinned comment (credit lines added by code), and is checked on the rendered
+file with a quality score. It can then be exported to a folder with its text
+and rights record. Publishing to YouTube (Phase 10) is the last step left.
 
 | Phase | What | State |
 | --- | --- | --- |
@@ -24,8 +28,8 @@ checks, titles and descriptions, export and publishing are still to come.
 | 6 | Captions | Done |
 | 7 | Music | Built; tested on synthetic music only |
 | 8 | Vertical framing and rendering | Done (facecam tested on a composite, not a real stream) |
-| 9 | Quality checks and export | Next |
-| 10 | YouTube publishing | Not started |
+| 9 | Quality checks, titles and descriptions, export | Done |
+| 10 | YouTube publishing | Next (needs the owner's Google Cloud project) |
 
 ## Open items that need the owner
 
@@ -39,12 +43,20 @@ checks, titles and descriptions, export and publishing are still to come.
    YouTube Audio Library), to test beat finding and mood matching on real
    songs. Phase 7 was tested on synthetic music only. Optional: Shorts can be
    made without music.
-4. **A Google Cloud project with the YouTube Data API**, before Phase 10.
+4. **A Google Cloud project with the YouTube Data API**, before Phase 10:
+   an OAuth client (desktop app) for your channel. You create it and sign in
+   yourself; ClipForge never handles your Google password.
 
 ## How it has been verified
 
-- 391 automated tests, using stand-ins for the platforms, the speech model
+- 417 automated tests, using stand-ins for the platforms, the speech model
   and the AI.
+- Quality checks proven on deliberately broken copies of a real Short: black
+  bars, a missing sound track, a silent one and music louder than the speech
+  were all caught; the original scored 100.
+- End to end from one YouTube link (Tears of Steel) to an export folder of 7
+  approved Shorts with their text, sidecars and rights record, using the real
+  speech model and real AI. All 7 passed their checks (scores 92–100).
 - Live runs with the real speech model and the real AI on: synthetic spoken
   test videos with known answers, and Tears of Steel (12 minutes of real
   dialogue, CC BY 3.0, Blender Foundation).
@@ -76,6 +88,10 @@ checks, titles and descriptions, export and publishing are still to come.
   one. Captions avoid faces, not the game's HUD. Real facecam overlays
   (rounded, transparent, keyed) are untested.
 - The final render takes about 1 to 1.8 times the clip's length here.
+- A face bigger than the frame (extreme close-up) is not detected, so captions
+  can cover it, unnoticed by the checks.
+- Titles and descriptions come from the transcript and the AI's reading of it
+  and are not fact-checked; read them before publishing.
 - No real music has been tested: beat finding and mood matching are measured
   on synthetic tracks only (beats within 6 ms on average, worst case 35 ms).
 - About one caption word in nine on real film dialogue is flagged as one the

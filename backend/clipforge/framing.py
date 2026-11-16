@@ -778,22 +778,54 @@ def _grow(b: Box, share: float) -> Box:
     return Box(b.x - share * b.w, b.y - share * b.h, b.w * (1 + 2 * share), b.h * (1 + 2 * share))
 
 
+def choose_tag_position(
+    faces_by_sample: list[list[Box]], keep_clear: list[Box], text_w: float, text_h: float
+) -> tuple[float, float, str, float]:
+    """Where the creator credit sits for the whole clip: a corner clear of faces, captions and the label.
+
+    The top corners first; YouTube's own title and buttons cover the bottom and the right-hand side lower down.
+    """
+    candidates = [
+        ("top left", 48 + text_w / 2, OUT_H * 0.045),
+        ("top right", OUT_W - 48 - text_w / 2, OUT_H * 0.045),
+        ("left, above the title", 48 + text_w / 2, OUT_H * 0.775),
+    ]
+    best = None
+    for name, x, y in candidates:
+        box = Box(x - text_w / 2, y - text_h / 2, text_w, text_h)
+        if any(box.overlap(k) > 0 for k in keep_clear):
+            continue
+        share = covered_share(box, faces_by_sample, allowed=0.0)
+        if share == 0:
+            return x, y, name, 0.0
+        if best is None or share < best[3]:
+            best = (x, y, name, share)
+    return best if best else (48 + text_w / 2, OUT_H * 0.045, "top left", 1.0)
+
+
 def place_text(
     plan: FramePlan, samples: list[Sample], position: int, size: int, outline: int,
-    label: tuple[str, float, float] | None,
+    label: tuple[str, float, float] | None, tag: tuple[str, float, float] | None = None,
 ) -> dict[str, Any]:
-    """Caption height and PART label spot for one clip, chosen so neither covers a face.
+    """Caption height, PART label spot and creator credit spot for one clip, chosen so none covers a face.
 
-    `label` is (text, width, height) in output pixels, or None for no label.
+    `label` and `tag` are (text, width, height) in output pixels, or None for none.
     """
     faces = faces_in_output(plan, samples)
     pos, share, note = choose_caption_position(faces, position, size, outline)
+    band = caption_band(pos, size, outline)
     out: dict[str, Any] = {"caption_position": pos, "caption_face_share": round(share, 3), "caption_note": note,
-                           "label": None}
+                           "label": None, "tag": None}
+    clear = [band]
     if label:
         text, w, h = label
         early = faces_in_output(plan, samples, LABEL_SECONDS)
-        x, y, where, lshare = choose_label_position(early, caption_band(pos, size, outline), w, h)
+        x, y, where, lshare = choose_label_position(early, band, w, h)
         out["label"] = {"text": text, "x": round(x), "y": round(y), "where": where, "until": LABEL_SECONDS,
                         "face_share": round(lshare, 3)}
+        clear.append(Box(x - w / 2, y - h / 2, w, h))
+    if tag:
+        text, w, h = tag
+        x, y, where, tshare = choose_tag_position(faces, clear, w, h)
+        out["tag"] = {"text": text, "x": round(x), "y": round(y), "where": where, "face_share": round(tshare, 3)}
     return out

@@ -5,15 +5,15 @@ best moments, cuts them with context, reframes to 9:16, adds word-synced
 captions and optional licensed music, and writes titles and hashtags. Nothing
 is published without approval.
 
-**Status:** Phases 1 to 8 of 10 are built — the app foundation, dashboard,
+**Status:** Phases 1 to 9 of 10 are built — the app foundation, dashboard,
 video ingestion, whole-video analysis, AI moment picking, clip cutting with
-Smart Duration, word-synced captions, background music, and vertical framing
-with the final render. It finds the moments worth clipping, cuts each one on
-whole sentences, frames it around the speaker or the streamer's facecam, adds
-captions and music, and renders finished 1080×1920 Shorts you can download.
-It does not yet run the quality checks, write titles and descriptions, or
-publish. Everything so far has been checked on test videos, openly licensed
-films and synthetic music, not on real stream footage or real songs. See the
+Smart Duration, word-synced captions, background music, vertical framing with
+the final render, and quality checks with titles, descriptions and export.
+From one link or file it produces finished 1080×1920 Shorts, each checked,
+with its text written and credit given, and exports them to a folder. It does
+not yet publish to YouTube (Phase 10). Everything so far has been checked on
+test videos, openly licensed films and synthetic music, not on real stream
+footage or real songs. See the
 [roadmap](docs/ROADMAP.md) for what each
 phase adds and the [architecture](docs/ARCHITECTURE.md) for how it fits
 together.
@@ -111,6 +111,27 @@ Options: `--port 9000`, `--no-browser`, `--data-dir <folder>`.
   limiter on peaks only. Each file is checked (size, codecs, length,
   loudness, peak) and can be downloaded from the Clip editor; they are kept in
   the project's `final` folder.
+- Clips from someone else's video carry a small "@Name" credit on screen, in a
+  corner clear of faces and captions (it can be turned off per project).
+- Quality checks on every final Short, on the rendered file itself: size and
+  codecs, length, black bars, black or frozen picture, missing or silent
+  sound, clipping, loudness, music too loud under the speech, long silence,
+  caption checks, unclear words, whole-sentence cut, repeats and rights. Each
+  Short gets a score out of 100 and the reason for every problem. A Short that
+  fails a check is not exported unless you export it anyway.
+- Titles, descriptions, hashtags and a pinned comment, written by the AI from
+  what is said in each clip (one request for all of them). The credit and the
+  original link at the top of the description, the music credit, "Part 1/2"
+  and #Shorts are added by the app itself, so they are never missing. You can
+  edit the text or have it written again. Without an AI, a plain title is made
+  from the words said.
+- Generated Shorts page: every approved or rendered clip with its video,
+  quality report and text; approve, reject, render again, export, download.
+  Export writes the MP4, a paste-ready `.txt` and a `.json` with the text,
+  rights record, music licence and quality report into
+  `data\exports\<project>` (or the folder in `CLIPFORGE_EXPORT_DIR`), with the
+  project's `rights.json` beside them. Shorts from a video whose rights are
+  not confirmed are exported with a warning.
 - Live, stage-by-stage progress for background jobs, with cancel and retry.
   A job interrupted by closing or killing the app continues from the first
   unfinished stage when the app starts again.
@@ -118,7 +139,7 @@ Options: `--port 9000`, `--no-browser`, `--data-dir <folder>`.
 - Settings → Pipeline self-test: checks FFmpeg, renders a captioned vertical
   test clip, checks storage.
 
-Generated Shorts is a placeholder until Phase 9.
+Publishing to YouTube is Phase 10.
 
 ## Set up on a new machine
 

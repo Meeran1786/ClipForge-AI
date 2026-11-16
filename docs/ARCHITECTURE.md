@@ -386,6 +386,12 @@ Every clip from someone else's footage credits the creator automatically:
   of the generated description;
 - the same details in the `rights.json` sidecar.
 
+As built in Phase 9: the on-screen tag is `@Name` (the credit the owner
+entered, else the channel name) for the whole clip, placed in a top corner, or
+above YouTube's title on the left, wherever no face, caption or PART label is.
+There is no platform icon. The description's first lines are
+`Credit: Name on Platform` and `Original video: link`, written by code.
+
 Credit is good practice and is usually a condition when a streamer allows
 clipping, but it is not permission. A credited clip can still receive a
 copyright claim or strike, and credit alone does not satisfy YouTube's
@@ -465,6 +471,36 @@ Run on every rendered clip before it appears as ready:
 
 Each check contributes to a quality score; failures are listed on the clip
 card with the reason.
+
+As built in Phase 9 (`qc.py`), with these differences from the table above:
+
+- The picture checks run in one FFmpeg pass over a 270×480 copy of the
+  file: `cropdetect` (accumulated over the whole Short, so only edges black
+  throughout count as bars), `blackdetect`, `freezedetect`, and on the sound
+  `silencedetect` and `volumedetect`. True peak and loudness come from the
+  `loudnorm` measurement already made for the final render.
+- "Music below speech" is measured on the file, not on stems. The clip's own
+  sound is rendered again with the final's single gain, lined up with the
+  file's sound to the sample, and taken away from it. What remains is
+  everything that was added (the music), and its level during the spoken
+  words, against the speech, is the gap. If no music was added and the
+  remainder is still loud, the speech itself was changed, and that fails too.
+- "Captions match speech" uses the words the speech model was unsure of
+  (more than 15% is a warning); "no cut words" uses the cut's own report;
+  "not a duplicate" compares the words of the other clips of the same video.
+- Rights: unconfirmed rights are a warning, not a fail, because exporting
+  is allowed with a warning; publishing them is refused in Phase 10.
+- Status per check is ok, warn or fail. The score is 100, less 30 per fail
+  and 8 per warning. Results are stored with the final render
+  (`clip.final.qc`); there is no separate `qc_results` table.
+
+Titles and descriptions (`metadata.py`) are written once per final render
+(clips without text) in one AI request for all the clips, or on request
+("Write again"). Credit lines, part numbering, #Shorts and length limits are
+applied by code after the AI answers, never left to it. Export
+(`exports.py`) copies the final file and writes a `.txt` and a `.json`
+sidecar beside it, plus the project's `rights.json`; a re-export replaces the
+previous files of the same clip.
 
 ## 11. Data model (main tables)
 
