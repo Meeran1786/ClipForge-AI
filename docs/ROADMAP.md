@@ -588,7 +588,7 @@ Not done, and limits:
   different videos.
 - Export copies files; nothing is uploaded (Phase 10).
 
-## Phase 10 — YouTube publishing
+## Phase 10 — YouTube publishing — built 2026-11-17, live upload waiting on the owner
 
 - OAuth with the owner's channel via the YouTube Data API.
 - Upload as private, publish only after explicit approval per clip.
@@ -596,6 +596,68 @@ Not done, and limits:
 
 Gate: one private upload to the owner's channel; an unverified-rights clip is
 refused by the service.
+
+What was built:
+
+- `youtube.py`, using httpx only (no Google library):
+  - the owner's own OAuth client (type "Desktop app") from their Google Cloud
+    project;
+  - sign-in on Google's page in the owner's browser, returning a one-time code
+    to `http://127.0.0.1:<port>/api/youtube/callback`, exchanged with PKCE;
+  - the token kept in `data\youtube` (not in git), renewed automatically, and
+    revoked on Disconnect;
+  - resumable uploads in 8 MB chunks, with the session saved so an interrupted
+    upload carries on where it stopped;
+  - privacy changes that keep the rest of the video's status.
+- `publish_blocker` refuses anything from a video whose rights are not
+  confirmed, and any clip that is not approved, not rendered or without a
+  title. One that failed its checks goes up only with "anyway". This runs in
+  the API and again inside the upload stage before any request leaves the
+  computer.
+- An `upload` job uploads as **private** only. A Short already on the channel
+  is never uploaded twice. Making it public or unlisted is a separate request
+  that must carry `confirm: true` and the exact title the owner saw. It is
+  refused for unconfirmed rights, but going back to private is always allowed.
+  If YouTube keeps the video private (projects YouTube has not audited), the
+  app says so plainly.
+- Settings → YouTube channel: setup steps, client file, Connect / Disconnect,
+  upload category and the "made for kids" declaration. Each Short on the
+  Generated Shorts page has Upload as private, Open on YouTube / in Studio,
+  Check status, and a Publish… step with a checklist: rights, approval,
+  1080×1920, at most 3 minutes, quality, title, credit, channel, kids
+  declaration. The pinned comment is shown for the owner to post and pin
+  themselves; YouTube's API cannot pin comments.
+
+Gate results so far:
+
+- **Unverified rights are refused by the service.** On the test server, a
+  real rendered Short from a project switched to unconfirmed rights was
+  refused with HTTP 409 and the reason; no upload job was created and nothing
+  was sent.
+- 434 automated tests pass. Seventeen of them are new and run against a
+  stand-in for Google (no test can reach Google), covering:
+  - sign-in: PKCE and the local return address, a callback not started here,
+    access not fully granted, renewing and withdrawn access, disconnect;
+  - refusal: at the API and again in the upload stage, without a retry;
+  - upload: private, byte-for-byte, a dropped connection resumed, the daily
+    limit, no second copy;
+  - publishing: only with confirmation and the matching title, YouTube keeping
+    a video private, refusal after rights are withdrawn.
+- **Not done: the private upload to the owner's channel.** This needs the
+  owner's Google Cloud OAuth client and their own sign-in, and nothing has
+  been sent to YouTube yet.
+
+Limits:
+
+- YouTube's default quota allows about six uploads a day (1,600 of 10,000
+  units each).
+- Videos uploaded through a Google Cloud project that has not passed
+  YouTube's API audit are kept private by YouTube. The owner can publish them
+  in YouTube Studio, or apply for the audit.
+- The scope asked for is "manage your YouTube account"
+  (`auth/youtube`), because changing a video's privacy needs it; upload
+  alone would need less.
+- No custom thumbnail, schedule or playlist yet.
 
 ## Later
 

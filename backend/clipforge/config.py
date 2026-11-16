@@ -64,6 +64,11 @@ class Settings(BaseSettings):
         return self.export_dir or self.data_dir / "exports"
 
     @property
+    def youtube_dir(self) -> Path:
+        """The owner's OAuth client file and channel token (never in git)."""
+        return self.data_dir / "youtube"
+
+    @property
     def music_dir(self) -> Path:
         return self.data_dir / "music"
 

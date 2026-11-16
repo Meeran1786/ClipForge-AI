@@ -6,6 +6,7 @@ file dialog: every app is built on a temporary folder, and the picker is stubbed
 
 from __future__ import annotations
 
+import json
 import re
 import shutil
 import subprocess
@@ -198,6 +199,104 @@ class FakeReasoner:
             "start_line": numbers[0], "end_line": numbers[-1], "peak_line": numbers[-1],
             "category": "funny", "scores": {k: 7 for k in SUBSCORES}, "reason": "They say hello to chat.",
         }]}
+
+
+class FakeGoogle:
+    """Stands in for Google's sign-in and the YouTube Data API. Records every request; nothing leaves this computer."""
+
+    SESSION = "https://upload.fake.test/session/1"
+
+    def __init__(self) -> None:
+        self.requests: list[tuple[str, str]] = []
+        self.uploads: list[dict] = []  # the metadata sent when an upload starts
+        self.received = b""
+        self.drop_after: int | None = None  # simulate a dropped connection once this many bytes have arrived
+        self.quota = False
+        self.locked_private = False  # an unaudited API project: YouTube keeps videos private
+        self.revoked = False
+        self.granted_scope = "https://www.googleapis.com/auth/youtube"
+        self.privacy = "private"
+        self.updates: list[dict] = []
+        self.expected_size = 0
+
+    def handler(self, request):
+        import httpx
+
+        url = str(request.url)
+        self.requests.append((request.method, url.split("?")[0]))
+        if url.startswith("https://oauth2.googleapis.com/token"):
+            form = dict(x.split("=", 1) for x in request.content.decode().split("&"))
+            if form.get("grant_type") == "refresh_token" and self.revoked:
+                return httpx.Response(400, json={"error": "invalid_grant"})
+            body = {"access_token": "access-1", "expires_in": 3600, "scope": self.granted_scope}
+            if form.get("grant_type") == "authorization_code":
+                body["refresh_token"] = "refresh-1"
+            return httpx.Response(200, json=body)
+        if url.startswith("https://oauth2.googleapis.com/revoke"):
+            self.revoked = True
+            return httpx.Response(200)
+        if url.startswith("https://www.googleapis.com/youtube/v3/channels"):
+            return httpx.Response(200, json={"items": [{"id": "UC123", "snippet": {"title": "Test Channel"}}]})
+        if url.startswith("https://www.googleapis.com/upload/youtube/v3/videos"):
+            if self.quota:
+                return httpx.Response(403, json={"error": {"message": "quota", "errors": [{"reason": "quotaExceeded"}]}})
+            self.uploads.append(json.loads(request.content))
+            self.expected_size = int(request.headers["X-Upload-Content-Length"])
+            self.received = b""
+            return httpx.Response(200, headers={"Location": self.SESSION})
+        if url.startswith(self.SESSION):
+            rng = request.headers["Content-Range"]
+            if rng.startswith("bytes */"):
+                if len(self.received) == self.expected_size:
+                    return self._done()
+                return httpx.Response(308, headers={"Range": f"bytes=0-{len(self.received) - 1}"} if self.received else {})
+            start = int(rng.split(" ")[1].split("-")[0])
+            assert start == len(self.received), "chunks must carry on exactly where the server stopped"
+            if self.drop_after is not None and len(self.received) >= self.drop_after:
+                self.drop_after = None
+                raise httpx.ConnectError("connection dropped", request=request)
+            self.received += request.content
+            if len(self.received) == self.expected_size:
+                return self._done()
+            return httpx.Response(308, headers={"Range": f"bytes=0-{len(self.received) - 1}"})
+        if url.startswith("https://www.googleapis.com/youtube/v3/videos"):
+            if request.method == "GET":
+                return httpx.Response(200, json={"items": [{"id": "vid123", "status": {
+                    "privacyStatus": self.privacy, "uploadStatus": "processed", "selfDeclaredMadeForKids": False,
+                    "license": "youtube", "embeddable": True}}]})
+            body = json.loads(request.content)
+            self.updates.append(body)
+            if not self.locked_private:
+                self.privacy = body["status"]["privacyStatus"]
+            return httpx.Response(200, json={"id": "vid123", "status": {"privacyStatus": self.privacy}})
+        raise AssertionError(f"unexpected request to {url}")
+
+    def _done(self):
+        import httpx
+
+        return httpx.Response(200, json={"id": "vid123", "status": {"privacyStatus": "private", "uploadStatus": "uploaded"}})
+
+
+@pytest.fixture(autouse=True)
+def no_real_google(monkeypatch):
+    """No test reaches Google. Tests that need it use `fake_google`."""
+    from clipforge import youtube
+
+    def refuse():
+        raise AssertionError("tests must not reach Google")
+
+    monkeypatch.setattr(youtube, "make_http", refuse)
+
+
+@pytest.fixture
+def fake_google(monkeypatch) -> FakeGoogle:
+    import httpx
+
+    from clipforge import youtube
+
+    fake = FakeGoogle()
+    monkeypatch.setattr(youtube, "make_http", lambda: httpx.Client(transport=httpx.MockTransport(fake.handler)))
+    return fake
 
 
 @pytest.fixture(autouse=True)

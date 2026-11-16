@@ -5,7 +5,8 @@ best moments, cuts them with context, reframes to 9:16, adds word-synced
 captions and optional licensed music, and writes titles and hashtags. Nothing
 is published without approval.
 
-**Status:** Phases 1 to 9 of 10 are built — the app foundation, dashboard,
+**Status:** Phases 1 to 10 are built; the upload to a real YouTube channel
+is still to be tried with the owner's own Google Cloud client. Phases 1 to 9 are — the app foundation, dashboard,
 video ingestion, whole-video analysis, AI moment picking, clip cutting with
 Smart Duration, word-synced captions, background music, vertical framing with
 the final render, and quality checks with titles, descriptions and export.
@@ -139,7 +140,14 @@ Options: `--port 9000`, `--no-browser`, `--data-dir <folder>`.
 - Settings → Pipeline self-test: checks FFmpeg, renders a captioned vertical
   test clip, checks storage.
 
-Publishing to YouTube is Phase 10.
+- YouTube (Settings → YouTube channel): use an OAuth client of type "Desktop
+  app" from your own Google Cloud project with the YouTube Data API v3 on, and
+  sign in on Google's own page; ClipForge never sees your password. Approved
+  Shorts are uploaded as private only. Making one public or unlisted is a
+  separate step with a checklist and your explicit confirmation. Anything from
+  a video whose rights are not confirmed is refused. YouTube allows about six
+  uploads a day on a new project, and keeps videos from projects it has not
+  audited private (publish those in YouTube Studio).
 
 ## Set up on a new machine
 

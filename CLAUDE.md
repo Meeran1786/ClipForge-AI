@@ -19,6 +19,7 @@ a test on real output.
 | [docs/TASKS.md](docs/TASKS.md) | Feature requests broken into items marked built / partly built / not built | When an item changes state |
 | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | Design, and an "as built" note per phase | When a phase changes the design |
 | [README.md](README.md) | What the app does today, how to run and set it up | When what the user sees changes |
+| [docs/PHASE11_PLAN.md](docs/PHASE11_PLAN.md) | Phase 11 plan (Creator Studio), milestones 11.1–11.10 and open decisions; **not approved, nothing built** | When the owner approves or changes it |
 
 At the end of a phase, all five are brought up to date before the phase is
 reported as done. Record what was tested and how, what failed and was fixed,
@@ -43,6 +44,7 @@ and what was not done. Never call a feature done because its screen exists.
 | `backend/clipforge/qc.py` | Quality checks on the rendered file and the quality score |
 | `backend/clipforge/metadata.py` | Titles, descriptions, hashtags, pinned comment; credit lines by code |
 | `backend/clipforge/exports.py` | Export: video, `.txt`, `.json` sidecar and `rights.json` into the export folder |
+| `backend/clipforge/youtube.py` | YouTube: owner's OAuth client, PKCE sign-in, resumable private upload, privacy change, `publish_blocker` |
 | `backend/clipforge/rights.py` | Rights record and the download gate |
 | `frontend/src/` | React + TypeScript + Tailwind dashboard |
 | `data/` | Database, project files, speech models (not in git) |
@@ -83,6 +85,12 @@ Run from the repository root (`D:\ClipForge-AI`).
   after the AI answers (`metadata.py`); links from the AI are removed.
 - **Quality checks measure the rendered file** (`qc.py`); a fail blocks export
   unless the owner exports anyway.
+- **YouTube: private uploads only; public only with the owner's confirmation**
+  (`confirm: true` plus the exact title). `publish_blocker` refuses unconfirmed
+  rights in the API and again in the upload stage. Never sign in, upload or
+  publish on the owner's behalf from a session: the owner signs in on Google's
+  page and says which Short goes up. Tests reach Google only through the
+  `fake_google` stand-in; `no_real_google` blocks everything else.
 - **Captions show what was heard.** Never correct, add or drop a word; flag
   unsure ones.
 - **No track without a complete licence record is ever used.** The check is

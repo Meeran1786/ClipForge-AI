@@ -248,6 +248,34 @@ export interface ExportResult {
   folder: string
 }
 
+export interface YouTubeStatus {
+  client: boolean
+  client_error: string | null
+  cloud_project: string | null
+  connected: boolean
+  channel: { id: string; title: string; url: string } | null
+  connected_at: string | null
+  scopes: string[]
+  defaults: { category_id: string; made_for_kids: boolean }
+  categories: Record<string, string>
+}
+
+export interface ClipYouTube {
+  video_id?: string
+  url?: string
+  studio_url?: string
+  privacy?: 'private' | 'unlisted' | 'public'
+  upload_status?: string
+  channel?: string
+  title?: string
+  uploaded_at?: string
+  published_at?: string | null
+  state?: 'uploading' | 'uploaded' | 'removed'
+  note?: string | null
+  rejection?: string | null
+  failure?: string | null
+}
+
 export interface ShortRow extends Clip {
   project: { id: number; title: string; rights_status: RightsStatus; creator: string | null }
 }
@@ -427,6 +455,7 @@ export interface Clip {
   final: ClipFinal | null
   meta: ClipMeta | null
   exported: ClipExport | null
+  youtube: ClipYouTube | null
   export_blocker: string | null
   status: 'cut' | 'rendered' | 'exported'
   review: 'pending' | 'approved' | 'rejected'
@@ -582,6 +611,18 @@ export const api = {
       body: JSON.stringify({ clip_ids: clipIds ?? null }),
     }),
   shorts: () => request<ShortRow[]>('/api/shorts'),
+  youtube: () => request<YouTubeStatus>('/api/youtube'),
+  youtubeClient: (path: string) => post<YouTubeStatus>('/api/youtube/client', { path }),
+  youtubeConnect: () => post<{ url: string }>('/api/youtube/connect'),
+  youtubeDisconnect: () => post<YouTubeStatus>('/api/youtube/disconnect'),
+  youtubeDefaults: (d: YouTubeStatus['defaults']) =>
+    request<YouTubeStatus>('/api/youtube/defaults', { method: 'PUT', body: JSON.stringify(d) }),
+  uploadShorts: (projectId: number, clipIds: number[], override = false) =>
+    post<Project>(`/api/projects/${projectId}/upload`, { clip_ids: clipIds, override }),
+  publishShort: (projectId: number, clipId: number, privacy: 'public' | 'unlisted' | 'private', title: string) =>
+    post<Clip>(`/api/projects/${projectId}/clips/${clipId}/publish`, { privacy, title, confirm: true }),
+  refreshShort: (projectId: number, clipId: number) =>
+    post<Clip>(`/api/projects/${projectId}/clips/${clipId}/youtube-refresh`),
   editClipText: (
     projectId: number,
     clipId: number,

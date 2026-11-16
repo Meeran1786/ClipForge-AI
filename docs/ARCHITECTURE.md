@@ -373,6 +373,15 @@ link, file).
   `rights.json`.
 - Publishing (Phase 10) is refused in code for `unverified` sources. This is a
   check in the publish service, not a UI hint.
+
+As built in Phase 10 (`youtube.py`, `api/youtube.py`): `publish_blocker`
+runs in the upload endpoint and again inside the `upload` stage before any
+request is sent; making a video public or unlisted checks the rights again
+and needs `confirm: true` with the exact title the owner saw. Uploads are
+always private. The OAuth flow uses the owner's own "Desktop app" client,
+PKCE, and a loopback return address on this app's own server; the token lives
+in `data\youtube\token.json`. Every call to Google goes through
+`youtube.make_http()`, which the tests replace with a stand-in.
 - The app shows YouTube's reused-content risk plainly and never states that
   editing makes footage fair use or that monetisation is guaranteed.
 

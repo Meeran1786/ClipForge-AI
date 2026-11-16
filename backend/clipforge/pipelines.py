@@ -37,6 +37,7 @@ from .ingest import PLATFORM_LABELS, IngestRefused, source_for
 from .jobs.engine import Pipeline, StageContext, StageDef
 from . import metadata as md
 from . import qc
+from . import youtube as yt
 from .ai.base import AIError
 from .captions import build_captions, clip_words, credit_tag_text, label_size, part_label_text, tag_size
 from .duration import ClipPlan, Context, DurationSettings, Word, plan_moment
@@ -1068,6 +1069,73 @@ def _write_text(ctx: StageContext) -> dict:
     return {"written": len(written), "plain": plain}
 
 
+YOUTUBE_DEFAULTS_KEY = "youtube_defaults"
+YOUTUBE_DEFAULTS = {"category_id": "20", "made_for_kids": False}
+
+
+def youtube_defaults(s: Session) -> dict:
+    row = s.get(Setting, YOUTUBE_DEFAULTS_KEY)
+    return {**YOUTUBE_DEFAULTS, **(row.value if row and isinstance(row.value, dict) else {})}
+
+
+def _upload(ctx: StageContext) -> dict:
+    """Upload the named clips to the owner's channel as private videos. Never public: that is a separate,
+    confirmed step. The rights and the clip are checked again here, right before anything is sent."""
+    ids = [int(i) for i in (ctx.params.get("clip_ids") or [])]
+    override = bool(ctx.params.get("override"))
+    with ctx.session() as s:
+        project = s.get(Project, ctx.project_id)
+        rights = project.rights_status
+        defaults = youtube_defaults(s)
+    http = yt.make_http()
+    done = 0
+    try:
+        for n, clip_id in enumerate(ids):
+            with ctx.session() as s:
+                clip = s.get(Clip, clip_id)
+                if clip is None or clip.project_id != ctx.project_id:
+                    continue
+                if (clip.youtube or {}).get("video_id"):
+                    continue  # already on the channel: never upload the same Short twice
+                why = yt.publish_blocker(rights, clip, override)
+                if why:
+                    raise yt.Refused(why)
+                file = Path(clip.final["file"])
+                body = yt.video_body(clip.meta, defaults["category_id"], defaults["made_for_kids"])
+                session_url = (clip.youtube or {}).get("session")
+
+            def keep_session(url: str, clip_id: int = clip_id) -> None:
+                with ctx.session() as s2:
+                    c = s2.get(Clip, clip_id)
+                    c.youtube = {**(c.youtube or {}), "session": url, "state": "uploading"}
+                    s2.commit()
+
+            def tick(f: float, n: int = n) -> None:
+                ctx.report((n + f) / len(ids), f"Uploading Short {n + 1} of {len(ids)}: {f:.0%}")
+
+            tick(0.0)
+            video = yt.upload(ctx.settings, http, file, body, session=session_url, on_session=keep_session,
+                              on_progress=tick, check=ctx.check)
+            token = yt.load_token(ctx.settings) or {}
+            with ctx.session() as s:
+                clip = s.get(Clip, clip_id)
+                clip.youtube = {
+                    "video_id": video["id"], "url": yt.shorts_url(video["id"]), "studio_url": yt.studio_url(video["id"]),
+                    "privacy": (video.get("status") or {}).get("privacyStatus", "private"),
+                    "upload_status": (video.get("status") or {}).get("uploadStatus"),
+                    "channel": (token.get("channel") or {}).get("title"), "title": body["snippet"]["title"],
+                    "uploaded_at": iso(utcnow()), "uploaded_anyway": bool(override and not (clip.final.get("qc") or {}).get("passed", True)),
+                    "state": "uploaded",
+                }
+                s.commit()
+            done += 1
+            ctx.publish_project()
+    finally:
+        http.close()
+    ctx.report(1.0, f"{done} Short(s) uploaded as private")
+    return {"uploaded": done}
+
+
 def loudness_verdict(loud: dict) -> tuple[bool, str] | None:
     """Whether the final loudness is right, and how to say so."""
     if loud.get("lufs") is None:
@@ -1235,6 +1303,9 @@ def _ingest_finished(s: Session, job: Job) -> None:
         elif failed_stage == "final":
             project.status = "ready"
             project.status_detail = f"The final Shorts were not rendered: {job.error}. Use Retry to try again."
+        elif failed_stage == "upload":
+            project.status = "ready"
+            project.status_detail = f"Not uploaded to YouTube: {job.error}"
         elif failed_stage == "text":
             project.status = "ready"
             project.status_detail = f"The titles and descriptions were not written: {job.error}. Use Retry to try again."
@@ -1394,6 +1465,9 @@ PIPELINES: dict[str, Pipeline] = {
                               StageDef("final", "Render and check final Shorts", _final)],
                       on_finish=_ingest_finished, on_retry=_ingest_retried),
     # write the text again for the named clips (asks the AI)
+    # upload approved, rendered Shorts to the owner's channel as private videos
+    "upload": Pipeline(stages=[StageDef("upload", "Upload to YouTube as private", _upload, max_attempts=3)],
+                       on_finish=_ingest_finished, on_retry=_ingest_retried),
     "text": Pipeline(stages=[StageDef("text", "Write titles and descriptions", _write_text)],
                          on_finish=_ingest_finished, on_retry=_ingest_retried),
     "ingest_url": Pipeline(

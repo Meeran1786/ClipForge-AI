@@ -3,6 +3,7 @@ import { type ReactNode, useEffect, useState } from 'react'
 import { api, type ProjectOptions } from '../api'
 import { MusicLibrary } from '../components/MusicLibrary'
 import { OptionsForm, optionsError } from '../components/OptionsForm'
+import { YouTubeChannel } from '../components/YouTubeChannel'
 import { Badge, Empty, ErrorNote, JobPanel, PageHeader, Section, Spinner } from '../ui'
 
 function Row({ label, children }: { label: string; children: ReactNode }) {
@@ -234,10 +235,12 @@ export default function Settings() {
             )}
           </Section>
 
+          <YouTubeChannel />
+
           <Section title="Not built yet">
             <ul className="space-y-2 text-sm text-soft">
               <li>Choosing the AI provider and models here (set in the .env file for now)</li>
-              <li>Export settings — Phase 9</li>
+              <li>The export folder is set with CLIPFORGE_EXPORT_DIR in the .env file</li>
             </ul>
           </Section>
         </div>

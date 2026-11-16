@@ -18,6 +18,7 @@ from .api import jobs as jobs_api
 from .api import music as music_api
 from .api import projects as projects_api
 from .api import system as system_api
+from .api import youtube as youtube_api
 from .config import Settings
 from .context import AppContext
 from .db import make_engine, make_session_factory
@@ -97,6 +98,7 @@ def create_app(
     app.include_router(music_api.router)
     app.include_router(projects_api.router)
     app.include_router(projects_api.shorts_router)
+    app.include_router(youtube_api.router)
     app.include_router(jobs_api.router)
 
     @app.websocket("/api/ws")

@@ -16,7 +16,9 @@ Approved clips are rendered as finished 1080×1920 Shorts levelled to
 YouTube's loudness. Each one gets AI-written title, description, hashtags and
 pinned comment (credit lines added by code), and is checked on the rendered
 file with a quality score. It can then be exported to a folder with its text
-and rights record. Publishing to YouTube (Phase 10) is the last step left.
+and rights record, or uploaded to the owner's channel as private and made
+public only after an explicit, per-Short confirmation. The upload to a real
+channel has not been tried yet: it needs the owner's Google Cloud client.
 
 | Phase | What | State |
 | --- | --- | --- |
@@ -29,7 +31,13 @@ and rights record. Publishing to YouTube (Phase 10) is the last step left.
 | 7 | Music | Built; tested on synthetic music only |
 | 8 | Vertical framing and rendering | Done (facecam tested on a composite, not a real stream) |
 | 9 | Quality checks, titles and descriptions, export | Done |
-| 10 | YouTube publishing | Next (needs the owner's Google Cloud project) |
+| 10 | YouTube publishing | Built; refusal gate passed; private upload waits for the owner's Google Cloud client |
+
+## Next
+
+Phase 11 (Creator Studio) is planned in [PHASE11_PLAN.md](PHASE11_PLAN.md)
+and waiting for the owner's approval and answers to its open questions.
+Nothing of it is built.
 
 ## Open items that need the owner
 
@@ -43,14 +51,19 @@ and rights record. Publishing to YouTube (Phase 10) is the last step left.
    YouTube Audio Library), to test beat finding and mood matching on real
    songs. Phase 7 was tested on synthetic music only. Optional: Shorts can be
    made without music.
-4. **A Google Cloud project with the YouTube Data API**, before Phase 10:
-   an OAuth client (desktop app) for your channel. You create it and sign in
-   yourself; ClipForge never handles your Google password.
+4. **The Phase 10 gate: one private upload.** Create a Google Cloud project,
+   enable the YouTube Data API v3, set the OAuth consent screen to Testing
+   with your account as a test user, create an OAuth client of type "Desktop
+   app" and download its JSON. Then in ClipForge, Settings → YouTube channel:
+   add the file and connect (you sign in on Google's page; ClipForge never
+   sees your password). Then choose which Short to upload as private.
 
 ## How it has been verified
 
-- 417 automated tests, using stand-ins for the platforms, the speech model
-  and the AI.
+- 434 automated tests, using stand-ins for the platforms, the speech model,
+  the AI and Google.
+- The service refused to upload a real Short from a video with unconfirmed
+  rights (HTTP 409, nothing sent).
 - Quality checks proven on deliberately broken copies of a real Short: black
   bars, a missing sound track, a silent one and music louder than the speech
   were all caught; the original scored 100.
@@ -97,5 +110,8 @@ and rights record. Publishing to YouTube (Phase 10) is the last step left.
 - About one caption word in nine on real film dialogue is flagged as one the
   speech model was unsure of; captions cannot yet be corrected by hand.
 - Kick recordings cannot be downloaded; add them as files.
+- YouTube allows about six uploads a day on a new Google Cloud project, and
+  keeps videos uploaded through an unaudited project private; publish those
+  yourself in YouTube Studio.
 - This PC has no graphics card: speech-to-text runs at about ten times real
   time, so a three-hour stream takes roughly 20–40 minutes.

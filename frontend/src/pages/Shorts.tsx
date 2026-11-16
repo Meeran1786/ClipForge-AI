@@ -1,7 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useEffect, useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
-import { api, type ExportResult, type ShortRow } from '../api'
+import { api, type ExportResult, type ShortRow, type YouTubeStatus } from '../api'
 import { QualityList, ScoreBadge } from '../components/Quality'
 import { CATEGORY_LABEL, RIGHTS } from '../format'
 import { Badge, Empty, ErrorNote, PageHeader, Section, Spinner } from '../ui'
@@ -127,6 +127,174 @@ function TextEditor({ row }: { row: ShortRow }) {
   )
 }
 
+const SHORTS_MAX_SECONDS = 180
+
+function checklist(row: ShortRow, yt: YouTubeStatus | undefined) {
+  const f = row.final
+  const own = row.project.rights_status === 'own'
+  const items: { ok: boolean; text: string }[] = [
+    { ok: row.project.rights_status !== 'unverified', text: 'Rights to the source video are confirmed' },
+    { ok: row.review === 'approved', text: 'You approved this clip' },
+    { ok: !!f && f.width === 1080 && f.height === 1920, text: 'Vertical 1080×1920' },
+    { ok: !!f && f.duration <= SHORTS_MAX_SECONDS, text: `${f ? f.duration.toFixed(0) : '—'} s, within YouTube's 3-minute Shorts limit` },
+    { ok: !!f?.qc?.passed, text: `Quality checks passed${f?.qc ? ` (score ${f.qc.score})` : ''}` },
+    { ok: !!row.meta && row.meta.title.length > 0 && row.meta.title.length <= 100, text: 'Title set, 100 characters or fewer' },
+    {
+      ok: own || !!row.meta?.description.startsWith('Credit:'),
+      text: own ? 'Your own video: no credit needed' : 'The description starts with the creator credit',
+    },
+    { ok: !!yt?.connected, text: `Channel connected${yt?.channel ? `: ${yt.channel.title}` : ''}` },
+    { ok: true, text: `Declared ${yt?.defaults.made_for_kids ? 'made' : 'not made'} for kids (Settings)` },
+  ]
+  return items
+}
+
+function YouTubePanel({ row }: { row: ShortRow }) {
+  const qc = useQueryClient()
+  const yt = useQuery({ queryKey: ['youtube'], queryFn: api.youtube })
+  const p = row.project
+  const v = row.youtube
+  const [confirming, setConfirming] = useState<null | 'public' | 'unlisted'>(null)
+  const refresh = () => void qc.invalidateQueries({ queryKey: ['shorts'] })
+  const upload = useMutation({ mutationFn: (override: boolean) => api.uploadShorts(p.id, [row.id], override), onSuccess: refresh })
+  const publish = useMutation({
+    mutationFn: (privacy: 'public' | 'unlisted' | 'private') => api.publishShort(p.id, row.id, privacy, v?.title ?? ''),
+    onSuccess: () => {
+      setConfirming(null)
+      refresh()
+    },
+  })
+  const check = useMutation({ mutationFn: () => api.refreshShort(p.id, row.id), onSuccess: refresh })
+  const items = checklist(row, yt.data)
+  const failedQc = !!row.final?.qc && !row.final.qc.passed
+  const blocking = items.filter((i) => !i.ok && !(failedQc && i.text.startsWith('Quality')))
+  const err = upload.error ?? publish.error ?? check.error
+
+  if (!row.final?.exists) return null
+  return (
+    <div className="rounded-md border border-line px-3 py-3">
+      <div className="mb-2 flex flex-wrap items-center gap-2">
+        <span className="text-sm font-medium">YouTube</span>
+        {v?.video_id ? (
+          <Badge tone={v.privacy === 'public' ? 'good' : v.privacy === 'unlisted' ? 'info' : 'warn'}>
+            {v.privacy === 'public' ? 'Public' : v.privacy === 'unlisted' ? 'Unlisted' : 'Private'} on {v.channel ?? 'your channel'}
+          </Badge>
+        ) : v?.state === 'uploading' ? (
+          <Badge tone="info">Upload started</Badge>
+        ) : (
+          <Badge>Not uploaded</Badge>
+        )}
+      </div>
+
+      {!v?.video_id ? (
+        <>
+          {p.rights_status === 'unverified' ? (
+            <p className="text-xs text-bad">
+              Not uploaded: the rights to this video are not confirmed. Record ownership or the creator's permission
+              on the project first.
+            </p>
+          ) : !yt.data?.connected ? (
+            <p className="text-xs text-soft">
+              Connect your channel in{' '}
+              <Link to="/settings" className="text-accent hover:underline">
+                Settings
+              </Link>{' '}
+              to upload.
+            </p>
+          ) : (
+            <div className="flex flex-wrap items-center gap-2">
+              <button
+                className={`btn h-8 px-3 ${failedQc ? 'btn-danger' : 'btn-primary'}`}
+                disabled={upload.isPending || row.review !== 'approved'}
+                onClick={() => upload.mutate(failedQc)}
+                title={failedQc ? 'Upload even though a quality check failed' : undefined}
+              >
+                {failedQc ? 'Upload as private anyway' : 'Upload as private'}
+              </button>
+              <span className="text-xs text-faint">Nobody can see it until you publish it.</span>
+            </div>
+          )}
+        </>
+      ) : (
+        <div className="space-y-2">
+          <div className="flex flex-wrap items-center gap-2">
+            <a className="btn h-8 px-3" href={v.url} target="_blank" rel="noreferrer">
+              Open on YouTube
+            </a>
+            <a className="btn h-8 px-3" href={v.studio_url} target="_blank" rel="noreferrer">
+              Open in Studio
+            </a>
+            <button className="btn h-8 px-3" disabled={check.isPending} onClick={() => check.mutate()}>
+              Check status
+            </button>
+            {v.privacy !== 'public' && (
+              <button className="btn btn-primary h-8 px-3" onClick={() => setConfirming('public')}>
+                Publish…
+              </button>
+            )}
+            {v.privacy !== 'private' && (
+              <button className="btn h-8 px-3" disabled={publish.isPending} onClick={() => publish.mutate('private')}>
+                Make private again
+              </button>
+            )}
+          </div>
+          {v.note && <p className="text-xs text-accent">{v.note}</p>}
+          {(v.rejection || v.failure) && <p className="text-xs text-bad">YouTube: {v.rejection ?? v.failure}</p>}
+          {row.meta?.pinned_comment && (
+            <p className="text-xs text-soft">
+              Pinned comment (post and pin it yourself; YouTube's API cannot pin):{' '}
+              <span className="text-ink">{row.meta.pinned_comment}</span>
+            </p>
+          )}
+        </div>
+      )}
+
+      {confirming && v?.video_id && (
+        <div className="mt-3 rounded-md border border-accent/40 bg-accent/5 p-3">
+          <p className="text-sm font-medium">Publishing checklist</p>
+          <ul className="mt-2 space-y-1 text-xs">
+            {items.map((i) => (
+              <li key={i.text} className="flex gap-2">
+                <span className={i.ok ? 'text-good' : 'text-bad'}>{i.ok ? '✓' : '✕'}</span>
+                <span className={i.ok ? 'text-soft' : 'text-ink'}>{i.text}</span>
+              </li>
+            ))}
+          </ul>
+          <p className="mt-3 text-sm">
+            Make “<span className="font-medium">{v.title}</span>” visible on {v.channel ?? 'your channel'}?
+          </p>
+          <div className="mt-2 flex flex-wrap items-center gap-2">
+            <select
+              aria-label="Visibility"
+              className="input h-8 w-auto py-0 text-xs"
+              value={confirming}
+              onChange={(e) => setConfirming(e.target.value as 'public' | 'unlisted')}
+            >
+              <option value="public">Public: anyone can find it</option>
+              <option value="unlisted">Unlisted: only people with the link</option>
+            </select>
+            <button
+              className="btn btn-primary h-8 px-3"
+              disabled={publish.isPending || blocking.some((i) => i.text.startsWith('Rights'))}
+              onClick={() => publish.mutate(confirming)}
+            >
+              {publish.isPending ? 'Publishing…' : `Yes, make it ${confirming}`}
+            </button>
+            <button className="btn h-8 px-3" onClick={() => setConfirming(null)}>
+              Cancel
+            </button>
+          </div>
+        </div>
+      )}
+      {err && (
+        <div className="mt-2">
+          <ErrorNote>{err.message}</ErrorNote>
+        </div>
+      )}
+    </div>
+  )
+}
+
 function ShortCard({ row, onExported }: { row: ShortRow; onExported: (r: ExportResult) => void }) {
   const qc = useQueryClient()
   const refresh = () => void qc.invalidateQueries({ queryKey: ['shorts'] })
@@ -199,6 +367,8 @@ function ShortCard({ row, onExported }: { row: ShortRow; onExported: (r: ExportR
           {q && <QualityList q={q} />}
 
           <TextEditor row={row} />
+
+          <YouTubePanel row={row} />
 
           <div className="flex flex-wrap items-center gap-2 border-t border-line pt-3">
             {row.review !== 'approved' && (

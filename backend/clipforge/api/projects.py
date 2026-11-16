@@ -421,6 +421,7 @@ def clip_to_dict(c: Clip) -> dict:
         "final": _final_view(c.final),
         "meta": c.meta,
         "exported": c.exported,
+        "youtube": {k: v for k, v in (c.youtube or {}).items() if k != "session"} or None,
         "export_blocker": export_blocker(c) if c.final else None,
         "status": c.status,
         "review": c.review or "pending",

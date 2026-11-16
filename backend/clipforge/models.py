@@ -155,6 +155,8 @@ class Clip(Base):
     # Phase 9: title, description, hashtags and pinned comment; and where it was last exported
     meta: Mapped[dict[str, Any] | None] = mapped_column(JSON, default=None)
     exported: Mapped[dict[str, Any] | None] = mapped_column(JSON, default=None)
+    # Phase 10: the video on the owner's channel (id, privacy, when) and any upload in progress
+    youtube: Mapped[dict[str, Any] | None] = mapped_column(JSON, default=None)
     # pending | approved | rejected   (the user's decision)
     review: Mapped[str | None] = mapped_column(String(20), default="pending")
     overridden: Mapped[bool | None] = mapped_column(default=False)  # approved despite failing a check

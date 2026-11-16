@@ -1,0 +1,282 @@
+"""The owner's YouTube channel: connect, upload as private, publish with confirmation.
+
+The sign-in happens on Google's own page in the owner's browser; this app only
+receives a one-time code at /api/youtube/callback and never sees a password.
+"""
+
+from __future__ import annotations
+
+import html
+import secrets
+import threading
+import time
+from pathlib import Path
+from typing import Literal
+
+from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi.responses import HTMLResponse
+from pydantic import BaseModel, Field
+from sqlalchemy import func, select
+
+import httpx
+
+from .. import youtube as yt
+from ..context import AppContext, get_ctx
+from ..rights import PUBLISHABLE
+from ..models import Clip, Job, Project, Setting, iso, utcnow
+from ..pipelines import YOUTUBE_DEFAULTS_KEY, youtube_defaults
+from ..schemas import project_to_dict
+from .projects import clip_to_dict
+
+router = APIRouter(prefix="/api", tags=["youtube"])
+
+_PENDING: dict[str, tuple[str, str, float]] = {}  # state -> (code verifier, redirect uri, when)
+_LOCK = threading.Lock()
+PENDING_SECONDS = 15 * 60
+
+
+class ClientFile(BaseModel):
+    path: str
+
+
+class Defaults(BaseModel):
+    category_id: str = Field(default="20", pattern=r"^\d{1,3}$")
+    made_for_kids: bool = False
+
+
+class UploadRequest(BaseModel):
+    clip_ids: list[int] = Field(min_length=1)
+    override: bool = False  # upload even though a quality check failed
+
+
+class PublishRequest(BaseModel):
+    privacy: Literal["public", "unlisted", "private"] = "public"
+    confirm: bool = False  # the owner's explicit yes for this clip
+    title: str  # the title the owner saw when confirming; must still match
+
+
+def _status(ctx: AppContext) -> dict:
+    client_ok, client_error, project_id = False, None, None
+    path = yt.client_file(ctx.settings)
+    if path.is_file():
+        try:
+            project_id = yt.read_client(path).project_id
+            client_ok = True
+        except yt.Refused as exc:
+            client_error = str(exc)
+    token = yt.load_token(ctx.settings) or {}
+    with ctx.session() as s:
+        defaults = youtube_defaults(s)
+    return {
+        "client": client_ok, "client_error": client_error, "cloud_project": project_id,
+        "connected": bool(token.get("refresh_token")), "channel": token.get("channel"),
+        "connected_at": token.get("connected_at"), "scopes": yt.SCOPES, "defaults": defaults,
+        "categories": yt.CATEGORIES,
+    }
+
+
+@router.get("/youtube")
+def status(ctx: AppContext = Depends(get_ctx)) -> dict:
+    return _status(ctx)
+
+
+@router.post("/youtube/client")
+def set_client(body: ClientFile, ctx: AppContext = Depends(get_ctx)) -> dict:
+    """Use the OAuth client file the owner downloaded from their Google Cloud project."""
+    source = Path(body.path.strip().strip('"'))
+    if not source.is_file():
+        raise HTTPException(422, f"File not found: {source}")
+    try:
+        yt.save_client(ctx.settings, source)
+    except yt.Refused as exc:
+        raise HTTPException(422, str(exc)) from exc
+    return _status(ctx)
+
+
+@router.post("/youtube/connect")
+def connect(request: Request, ctx: AppContext = Depends(get_ctx)) -> dict:
+    """The address of Google's sign-in page, for the dashboard to open in the owner's browser."""
+    try:
+        client = yt.read_client(yt.client_file(ctx.settings))
+    except yt.Refused as exc:
+        raise HTTPException(409, "Add the client file from Google Cloud first. " + str(exc)) from exc
+    port = request.url.port or ctx.settings.port
+    redirect = f"http://127.0.0.1:{port}/api/youtube/callback"
+    verifier, challenge = yt.pkce_pair()
+    state = secrets.token_urlsafe(24)
+    with _LOCK:
+        now = time.time()
+        for k in [k for k, v in _PENDING.items() if now - v[2] > PENDING_SECONDS]:
+            del _PENDING[k]
+        _PENDING[state] = (verifier, redirect, now)
+    return {"url": yt.auth_url(client, redirect, state, challenge)}
+
+
+def _page(title: str, text: str, ok: bool) -> HTMLResponse:
+    colour = "#2f9e44" if ok else "#c92a2a"
+    return HTMLResponse(
+        f"<!doctype html><meta charset=utf-8><title>{html.escape(title)}</title>"
+        f"<body style='font-family:system-ui;background:#111;color:#eee;display:grid;place-items:center;height:90vh'>"
+        f"<div style='max-width:32rem'><h2 style='color:{colour}'>{html.escape(title)}</h2>"
+        f"<p>{html.escape(text)}</p><p><a style='color:#8cf' href='/settings'>Back to ClipForge settings</a></p></div>",
+        status_code=200 if ok else 400,
+    )
+
+
+@router.get("/youtube/callback", response_class=HTMLResponse)
+def callback(state: str = "", code: str = "", error: str = "", ctx: AppContext = Depends(get_ctx)) -> HTMLResponse:
+    """Where Google sends the owner back after they sign in."""
+    with _LOCK:
+        pending = _PENDING.pop(state, None)
+    if pending is None or time.time() - pending[2] > PENDING_SECONDS:
+        return _page("Not connected", "This sign-in link has expired or was not started here. Connect again.", False)
+    if error or not code:
+        return _page("Not connected", f"Google reported: {error or 'no code was given'}.", False)
+    verifier, redirect, _ = pending
+    http = yt.make_http()
+    try:
+        client = yt.read_client(yt.client_file(ctx.settings))
+        token = yt.exchange_code(http, client, code, verifier, redirect)
+        token["channel"] = yt.fetch_channel(http, token["access_token"])
+        token["connected_at"] = iso(utcnow())
+        yt.save_token(ctx.settings, token)
+    except yt.YouTubeError as exc:
+        return _page("Not connected", str(exc), False)
+    except httpx.HTTPError as exc:
+        return _page("Not connected", f"Google could not be reached ({exc}). Check the internet connection.", False)
+    finally:
+        http.close()
+    ctx.bus.publish({"type": "youtube"})
+    return _page("YouTube connected", f"ClipForge can now upload to “{token['channel']['title']}”. "
+                 "Every Short is uploaded as private; nothing becomes public without your confirmation.", True)
+
+
+@router.post("/youtube/disconnect")
+def disconnect(ctx: AppContext = Depends(get_ctx)) -> dict:
+    http = yt.make_http()
+    try:
+        yt.revoke(ctx.settings, http)
+    finally:
+        http.close()
+    return _status(ctx)
+
+
+@router.put("/youtube/defaults")
+def set_defaults(body: Defaults, ctx: AppContext = Depends(get_ctx)) -> dict:
+    if body.category_id not in yt.CATEGORIES:
+        raise HTTPException(422, "Unknown category")
+    with ctx.session() as s:
+        row = s.get(Setting, YOUTUBE_DEFAULTS_KEY)
+        if row is None:
+            s.add(Setting(key=YOUTUBE_DEFAULTS_KEY, value=body.model_dump()))
+        else:
+            row.value = body.model_dump()
+        s.commit()
+    return _status(ctx)
+
+
+def _busy(s, project_id: int) -> bool:
+    return bool(s.scalar(select(func.count(Job.id)).where(Job.project_id == project_id,
+                                                         Job.status.in_(("queued", "running")))))
+
+
+@router.post("/projects/{project_id}/upload")
+def upload(project_id: int, body: UploadRequest, ctx: AppContext = Depends(get_ctx)) -> dict:
+    """Upload approved, rendered Shorts as private videos. Refused outright for unconfirmed rights."""
+    with ctx.session() as s:
+        project = s.get(Project, project_id)
+        if project is None:
+            raise HTTPException(404, "Project not found")
+        if _busy(s, project_id):
+            raise HTTPException(409, "This project is still processing. Wait for it to finish first.")
+        clips = {c.id: c for c in s.scalars(select(Clip).where(Clip.project_id == project_id)).all()}
+        if not set(body.clip_ids) <= set(clips):
+            raise HTTPException(404, "Clip not found")
+        for cid in body.clip_ids:
+            why = yt.publish_blocker(project.rights_status, clips[cid], body.override)
+            if why:
+                raise HTTPException(409, why)
+        if not (yt.load_token(ctx.settings) or {}).get("refresh_token"):
+            raise HTTPException(409, "No YouTube channel is connected. Connect one in Settings.")
+        project.status, project.status_detail = "processing", None
+        s.commit()
+        data = project_to_dict(project)
+    ctx.worker.enqueue("upload", project_id=project_id, params={"clip_ids": body.clip_ids, "override": body.override})
+    ctx.bus.publish({"type": "project", "id": project_id})
+    return data
+
+
+@router.post("/projects/{project_id}/clips/{clip_id}/publish")
+def publish(project_id: int, clip_id: int, body: PublishRequest, ctx: AppContext = Depends(get_ctx)) -> dict:
+    """Change an uploaded Short's privacy. Only with the owner's explicit confirmation, checked here."""
+    if not body.confirm:
+        raise HTTPException(409, "Publishing needs your explicit confirmation for this Short.")
+    with ctx.session() as s:
+        project = s.get(Project, project_id)
+        clip = s.get(Clip, clip_id)
+        if project is None or clip is None or clip.project_id != project_id:
+            raise HTTPException(404, "Clip not found")
+        video = clip.youtube or {}
+        if not video.get("video_id"):
+            raise HTTPException(409, "Upload this Short as private first.")
+        if body.privacy != "private" and project.rights_status not in PUBLISHABLE:
+            raise HTTPException(409, "Refused: the rights to this video are not confirmed, so it cannot be made "
+                                     "public or unlisted.")
+        if body.title.strip() != (video.get("title") or "").strip():
+            raise HTTPException(409, "The title you confirmed is not the one on YouTube. Reload and confirm again.")
+        video_id = video["video_id"]
+    http = yt.make_http()
+    try:
+        result = yt.set_privacy(ctx.settings, http, video_id, body.privacy)
+    except yt.YouTubeError as exc:
+        raise HTTPException(409 if isinstance(exc, yt.Refused) else 502, str(exc)) from exc
+    except httpx.HTTPError as exc:
+        raise HTTPException(502, f"YouTube could not be reached ({exc}).") from exc
+    finally:
+        http.close()
+    actual = result.get("privacyStatus", body.privacy)
+    note = None
+    if actual != body.privacy:
+        note = ("YouTube kept this video private. Videos uploaded through a Google Cloud project that has not "
+                "passed YouTube's API audit stay private; publish it yourself in YouTube Studio, or apply for "
+                "the audit.")
+    with ctx.session() as s:
+        clip = s.get(Clip, clip_id)
+        clip.youtube = {**(clip.youtube or {}), "privacy": actual, "note": note,
+                        "published_at": iso(utcnow()) if actual != "private" else None,
+                        "requested_privacy": body.privacy}
+        s.commit()
+        data = clip_to_dict(clip)
+    ctx.bus.publish({"type": "project", "id": project_id})
+    return data
+
+
+@router.post("/projects/{project_id}/clips/{clip_id}/youtube-refresh")
+def refresh(project_id: int, clip_id: int, ctx: AppContext = Depends(get_ctx)) -> dict:
+    """Read the video's current state on YouTube (processing, privacy, removed)."""
+    with ctx.session() as s:
+        clip = s.get(Clip, clip_id)
+        if clip is None or clip.project_id != project_id or not (clip.youtube or {}).get("video_id"):
+            raise HTTPException(404, "This Short is not on YouTube")
+        video_id = clip.youtube["video_id"]
+    http = yt.make_http()
+    try:
+        item = yt.video_status(ctx.settings, http, video_id)
+    except yt.YouTubeError as exc:
+        raise HTTPException(409 if isinstance(exc, yt.Refused) else 502, str(exc)) from exc
+    except httpx.HTTPError as exc:
+        raise HTTPException(502, f"YouTube could not be reached ({exc}).") from exc
+    finally:
+        http.close()
+    with ctx.session() as s:
+        clip = s.get(Clip, clip_id)
+        if item is None:
+            clip.youtube = {**clip.youtube, "state": "removed", "note": "This video is no longer on your channel."}
+        else:
+            st = item.get("status") or {}
+            clip.youtube = {**clip.youtube, "privacy": st.get("privacyStatus"), "upload_status": st.get("uploadStatus"),
+                            "rejection": st.get("rejectionReason"), "failure": st.get("failureReason"),
+                            "checked_at": iso(utcnow())}
+        s.commit()
+        data = clip_to_dict(clip)
+    return data
