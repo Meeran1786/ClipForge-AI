@@ -1,7 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useEffect, useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
-import { api, type ExportResult, type ShortRow, type YouTubeStatus } from '../api'
+import { api, type ExportResult, type PublishChecklist, type ShortRow } from '../api'
 import { QualityList, ScoreBadge } from '../components/Quality'
 import { CATEGORY_LABEL, RIGHTS } from '../format'
 import { Badge, Empty, ErrorNote, PageHeader, Section, Spinner } from '../ui'
@@ -127,26 +127,28 @@ function TextEditor({ row }: { row: ShortRow }) {
   )
 }
 
-const SHORTS_MAX_SECONDS = 180
+const MARK = { ok: '✓', warn: '!', fail: '✕' } as const
+const TONE = { ok: 'text-good', warn: 'text-accent', fail: 'text-bad' } as const
 
-function checklist(row: ShortRow, yt: YouTubeStatus | undefined) {
-  const f = row.final
-  const own = row.project.rights_status === 'own'
-  const items: { ok: boolean; text: string }[] = [
-    { ok: row.project.rights_status !== 'unverified', text: 'Rights to the source video are confirmed' },
-    { ok: row.review === 'approved', text: 'You approved this clip' },
-    { ok: !!f && f.width === 1080 && f.height === 1920, text: 'Vertical 1080×1920' },
-    { ok: !!f && f.duration <= SHORTS_MAX_SECONDS, text: `${f ? f.duration.toFixed(0) : '—'} s, within YouTube's 3-minute Shorts limit` },
-    { ok: !!f?.qc?.passed, text: `Quality checks passed${f?.qc ? ` (score ${f.qc.score})` : ''}` },
-    { ok: !!row.meta && row.meta.title.length > 0 && row.meta.title.length <= 100, text: 'Title set, 100 characters or fewer' },
-    {
-      ok: own || !!row.meta?.description.startsWith('Credit:'),
-      text: own ? 'Your own video: no credit needed' : 'The description starts with the creator credit',
-    },
-    { ok: !!yt?.connected, text: `Channel connected${yt?.channel ? `: ${yt.channel.title}` : ''}` },
-    { ok: true, text: `Declared ${yt?.defaults.made_for_kids ? 'made' : 'not made'} for kids (Settings)` },
-  ]
-  return items
+/** The server's Shorts checklist: the same rules the upload and publish steps enforce. */
+function Checklist({ list, all }: { list: PublishChecklist; all: boolean }) {
+  const shown = all ? list.items : list.items.filter((i) => i.status !== 'ok')
+  if (shown.length === 0) return <p className="text-xs text-good">Everything on the Shorts checklist is ready.</p>
+  return (
+    <ul className="space-y-1 text-xs">
+      {shown.map((i) => (
+        <li key={i.name} className="flex gap-2">
+          <span className={`w-3 shrink-0 text-center font-bold ${TONE[i.status]}`} aria-hidden="true">
+            {MARK[i.status]}
+          </span>
+          <span>
+            <span className={i.status === 'ok' ? 'text-soft' : 'text-ink'}>{i.label}</span>
+            <span className="block text-faint">{i.detail}</span>
+          </span>
+        </li>
+      ))}
+    </ul>
+  )
 }
 
 function YouTubePanel({ row }: { row: ShortRow }) {
@@ -165,10 +167,21 @@ function YouTubePanel({ row }: { row: ShortRow }) {
     },
   })
   const check = useMutation({ mutationFn: () => api.refreshShort(p.id, row.id), onSuccess: refresh })
-  const items = checklist(row, yt.data)
+  const list = useQuery({
+    queryKey: ['checklist', row.id, row.final?.rendered_at, row.meta, row.youtube, row.review, p.rights_status, yt.data?.connected],
+    queryFn: () => api.publishChecklist(p.id, row.id),
+    enabled: !!row.final?.exists,
+  })
+  const sendText = useMutation({
+    mutationFn: () => api.sendTextToYouTube(p.id, row.id),
+    onSuccess: () => {
+      refresh()
+      void qc.invalidateQueries({ queryKey: ['checklist', row.id] })
+    },
+  })
   const failedQc = !!row.final?.qc && !row.final.qc.passed
-  const blocking = items.filter((i) => !i.ok && !(failedQc && i.text.startsWith('Quality')))
-  const err = upload.error ?? publish.error ?? check.error
+  const ready = list.data ? (failedQc ? list.data.passed_with_override : list.data.passed) : false
+  const err = upload.error ?? publish.error ?? check.error ?? sendText.error
 
   if (!row.final?.exists) return null
   return (
@@ -202,16 +215,19 @@ function YouTubePanel({ row }: { row: ShortRow }) {
               to upload.
             </p>
           ) : (
-            <div className="flex flex-wrap items-center gap-2">
-              <button
-                className={`btn h-8 px-3 ${failedQc ? 'btn-danger' : 'btn-primary'}`}
-                disabled={upload.isPending || row.review !== 'approved'}
-                onClick={() => upload.mutate(failedQc)}
-                title={failedQc ? 'Upload even though a quality check failed' : undefined}
-              >
-                {failedQc ? 'Upload as private anyway' : 'Upload as private'}
-              </button>
-              <span className="text-xs text-faint">Nobody can see it until you publish it.</span>
+            <div className="space-y-2">
+              {list.data && <Checklist list={list.data} all={false} />}
+              <div className="flex flex-wrap items-center gap-2">
+                <button
+                  className={`btn h-8 px-3 ${failedQc ? 'btn-danger' : 'btn-primary'}`}
+                  disabled={upload.isPending || !ready}
+                  onClick={() => upload.mutate(failedQc)}
+                  title={failedQc ? 'Upload even though a quality check failed' : undefined}
+                >
+                  {failedQc ? 'Upload as private anyway' : 'Upload as private'}
+                </button>
+                <span className="text-xs text-faint">Nobody can see it until you publish it.</span>
+              </div>
             </div>
           )}
         </>
@@ -238,6 +254,14 @@ function YouTubePanel({ row }: { row: ShortRow }) {
               </button>
             )}
           </div>
+          {list.data?.text_differs && (
+            <div className="flex flex-wrap items-center gap-2 rounded-md border border-accent/30 bg-accent/5 px-2 py-1.5">
+              <span className="text-xs text-accent">The title or description was edited after the upload.</span>
+              <button className="btn h-7 px-2 text-xs" disabled={sendText.isPending} onClick={() => sendText.mutate()}>
+                {sendText.isPending ? 'Sending…' : 'Send edited text to YouTube'}
+              </button>
+            </div>
+          )}
           {v.note && <p className="text-xs text-accent">{v.note}</p>}
           {(v.rejection || v.failure) && <p className="text-xs text-bad">YouTube: {v.rejection ?? v.failure}</p>}
           {row.meta?.pinned_comment && (
@@ -251,15 +275,11 @@ function YouTubePanel({ row }: { row: ShortRow }) {
 
       {confirming && v?.video_id && (
         <div className="mt-3 rounded-md border border-accent/40 bg-accent/5 p-3">
-          <p className="text-sm font-medium">Publishing checklist</p>
-          <ul className="mt-2 space-y-1 text-xs">
-            {items.map((i) => (
-              <li key={i.text} className="flex gap-2">
-                <span className={i.ok ? 'text-good' : 'text-bad'}>{i.ok ? '✓' : '✕'}</span>
-                <span className={i.ok ? 'text-soft' : 'text-ink'}>{i.text}</span>
-              </li>
-            ))}
-          </ul>
+          <p className="mb-2 text-sm font-medium">YouTube Shorts checklist</p>
+          {list.isPending ? <Spinner /> : list.data && <Checklist list={list.data} all />}
+          {list.data?.text_differs && (
+            <p className="mt-2 text-xs text-accent">Send the edited text to YouTube first, or the old text goes public.</p>
+          )}
           <p className="mt-3 text-sm">
             Make “<span className="font-medium">{v.title}</span>” visible on {v.channel ?? 'your channel'}?
           </p>
@@ -275,7 +295,7 @@ function YouTubePanel({ row }: { row: ShortRow }) {
             </select>
             <button
               className="btn btn-primary h-8 px-3"
-              disabled={publish.isPending || blocking.some((i) => i.text.startsWith('Rights'))}
+              disabled={publish.isPending || !ready || !!list.data?.text_differs}
               onClick={() => publish.mutate(confirming)}
             >
               {publish.isPending ? 'Publishing…' : `Yes, make it ${confirming}`}

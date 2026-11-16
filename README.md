@@ -144,7 +144,13 @@ Options: `--port 9000`, `--no-browser`, `--data-dir <folder>`.
   app" from your own Google Cloud project with the YouTube Data API v3 on, and
   sign in on Google's own page; ClipForge never sees your password. Approved
   Shorts are uploaded as private only. Making one public or unlisted is a
-  separate step with a checklist and your explicit confirmation. Anything from
+  separate step with your explicit confirmation. The YouTube Shorts checklist
+  covers rights, approval, 1080×1920, length (up to 3 minutes, with a warning
+  over one minute for others' footage or music), encoding, sound, quality,
+  title, description, hashtags, credit, music licence, kids declaration and
+  channel. It is shown on each Short and enforced by both steps. A title or
+  description edited after the upload can be sent to the video before
+  publishing. Anything from
   a video whose rights are not confirmed is refused. YouTube allows about six
   uploads a day on a new project, and keeps videos from projects it has not
   audited private (publish those in YouTube Studio).

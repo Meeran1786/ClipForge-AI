@@ -1,6 +1,9 @@
 # Phase 11 — ClipForge Intelligence & Creator Studio: implementation plan
 
-Status: **plan for the owner's approval. Nothing in this document is built.**
+Status: **approved by the owner on 2026-11-17, with every proposal in
+section 2 adopted as written** ("use your proposals"). That includes the
+order 11.9 first, and closing the Phase 10 private upload before 11.1.
+Progress per milestone is in section 7.
 Written 2026-11-17 after inspecting the repository as it stands after Phase 10.
 YouTube Shorts is the only target; no other platform is planned.
 
@@ -565,8 +568,53 @@ Rough effort, in sessions of the kind used for Phases 8–10:
 At the end of each milestone you get the push commands, as in every phase so
 far.
 
-## 6. What I need from you to start
+## 6. Decisions (2026-11-17)
 
-1. Approval of this plan, with any changes.
-2. Answers to section 2: items 1–9, or "use your proposals".
-3. Whether to close the Phase 10 upload before starting 11.1, as recommended.
+The owner approved the plan and chose "use your proposals" for every item of
+section 2. Phase 10's private upload is still to be done (it needs the owner's
+Google Cloud client); 11.1 starts after it, and 11.9 does not depend on it.
+
+## 7. Progress
+
+| Milestone | State |
+| --- | --- |
+| 11.9 YouTube Shorts optimisation | Done 2026-11-17 (see below) |
+| 11.1–11.8, 11.10 | Not started; 11.1 waits for the Phase 10 private upload |
+
+### 11.9 as built
+
+- `youtube.shorts_checklist()` is the one place the rules live:
+  - rights, approval, rendered;
+  - 1080×1920; at most 3 minutes (a warning over one minute when the footage
+    or music is someone else's, because YouTube blocks such Shorts if they get
+    a Content ID claim);
+  - H.264/AAC, peaks, quality checks (the only item an "anyway" can pass);
+  - title 1–100 characters (with `<` `>` a warning), description up to 5,000,
+    at most 60 hashtags, the credit for others' videos, the music licence;
+  - the made-for-kids declaration, the channel connected.
+
+  YouTube's limits sit in constants at the top of that section.
+- `publish_blocker` is now the checklist, less the channel item. It is
+  enforced by the upload endpoint, again in the upload stage, and by publish
+  (public or unlisted; an earlier "upload anyway" carries over to the quality
+  check).
+- `GET /clips/{id}/publish-checklist` returns the items and whether the text
+  on YouTube is out of date.
+- `POST /clips/{id}/youtube-text` sends the edited title, description and tags
+  to the uploaded video (`videos.update`, snippet). The title on record then
+  changes, so the publish confirmation must name the new title.
+- The Shorts page shows the server's checklist (problems only before upload,
+  every item in the publish step), offers "Send edited text to YouTube", and
+  blocks publishing while the text on YouTube is out of date.
+- Thumbnail rules are not in the checklist yet; they come with 11.4.
+
+Tests: 23 new (`test_shorts_checklist.py`), covering:
+- each rule passing and failing;
+- an override passing only the quality item;
+- the endpoints refusing a failing checklist;
+- edited text sent and then required in the confirmation;
+- YouTube refusing new text;
+- sending text before upload.
+
+All 457 tests pass. On a real gate Short from Tears of Steel, every item
+passed except "Channel connected", as expected with no channel connected.

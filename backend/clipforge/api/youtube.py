@@ -53,6 +53,7 @@ class PublishRequest(BaseModel):
     privacy: Literal["public", "unlisted", "private"] = "public"
     confirm: bool = False  # the owner's explicit yes for this clip
     title: str  # the title the owner saw when confirming; must still match
+    override: bool = False  # publish even though a quality check failed
 
 
 def _status(ctx: AppContext) -> dict:
@@ -219,9 +220,14 @@ def publish(project_id: int, clip_id: int, body: PublishRequest, ctx: AppContext
         video = clip.youtube or {}
         if not video.get("video_id"):
             raise HTTPException(409, "Upload this Short as private first.")
-        if body.privacy != "private" and project.rights_status not in PUBLISHABLE:
-            raise HTTPException(409, "Refused: the rights to this video are not confirmed, so it cannot be made "
-                                     "public or unlisted.")
+        if body.privacy != "private":
+            if project.rights_status not in PUBLISHABLE:
+                raise HTTPException(409, "Refused: the rights to this video are not confirmed, so it cannot be "
+                                         "made public or unlisted.")
+            with_override = body.override or bool(video.get("uploaded_anyway"))
+            why = yt.publish_blocker(project.rights_status, clip, with_override, youtube_defaults(s))
+            if why:
+                raise HTTPException(409, f"Not published. {why}")
         if body.title.strip() != (video.get("title") or "").strip():
             raise HTTPException(409, "The title you confirmed is not the one on YouTube. Reload and confirm again.")
         video_id = video["video_id"]
@@ -245,6 +251,66 @@ def publish(project_id: int, clip_id: int, body: PublishRequest, ctx: AppContext
         clip.youtube = {**(clip.youtube or {}), "privacy": actual, "note": note,
                         "published_at": iso(utcnow()) if actual != "private" else None,
                         "requested_privacy": body.privacy}
+        s.commit()
+        data = clip_to_dict(clip)
+    ctx.bus.publish({"type": "project", "id": project_id})
+    return data
+
+
+@router.get("/projects/{project_id}/clips/{clip_id}/publish-checklist")
+def publish_checklist(project_id: int, clip_id: int, ctx: AppContext = Depends(get_ctx)) -> dict:
+    """The YouTube Shorts checklist for one Short: the same rules the upload and publish steps enforce."""
+    with ctx.session() as s:
+        project = s.get(Project, project_id)
+        clip = s.get(Clip, clip_id)
+        if project is None or clip is None or clip.project_id != project_id:
+            raise HTTPException(404, "Clip not found")
+        token = yt.load_token(ctx.settings) or {}
+        result = yt.shorts_checklist(project.rights_status, clip, connected=bool(token.get("refresh_token")),
+                                     channel=(token.get("channel") or {}).get("title"), defaults=youtube_defaults(s))
+        video = clip.youtube or {}
+        meta = clip.meta or {}
+        sent_title = yt.video_body(meta, "20", False)["snippet"]["title"] if meta.get("title") else ""
+        result["text_differs"] = bool(video.get("video_id")) and (
+            sent_title.strip() != (video.get("title") or "").strip()
+            or meta.get("description") != video.get("description_sent", meta.get("description")))
+        return result
+
+
+@router.post("/projects/{project_id}/clips/{clip_id}/youtube-text")
+def send_text(project_id: int, clip_id: int, ctx: AppContext = Depends(get_ctx)) -> dict:
+    """Send the Short's edited title, description and hashtags to its video on YouTube."""
+    with ctx.session() as s:
+        project = s.get(Project, project_id)
+        clip = s.get(Clip, clip_id)
+        if project is None or clip is None or clip.project_id != project_id:
+            raise HTTPException(404, "Clip not found")
+        video = clip.youtube or {}
+        if not video.get("video_id"):
+            raise HTTPException(409, "This Short is not on YouTube yet; its text goes with the upload.")
+        if project.rights_status not in PUBLISHABLE:
+            raise HTTPException(409, yt.RIGHTS_REFUSAL)
+        checklist = yt.shorts_checklist(project.rights_status, clip, connected=True, channel=None,
+                                        defaults=youtube_defaults(s))
+        bad = [i for i in checklist["items"] if i["status"] == "fail" and i["name"] in ("title", "description", "hashtags")]
+        if bad:
+            raise HTTPException(409, f"{bad[0]['label']}: {bad[0]['detail']}")
+        meta = dict(clip.meta)
+        category = youtube_defaults(s)["category_id"]
+        video_id = video["video_id"]
+    http = yt.make_http()
+    try:
+        snippet = yt.update_text(ctx.settings, http, video_id, meta, category)
+    except yt.YouTubeError as exc:
+        raise HTTPException(409 if isinstance(exc, yt.Refused) else 502, str(exc)) from exc
+    except httpx.HTTPError as exc:
+        raise HTTPException(502, f"YouTube could not be reached ({exc}).") from exc
+    finally:
+        http.close()
+    with ctx.session() as s:
+        clip = s.get(Clip, clip_id)
+        clip.youtube = {**(clip.youtube or {}), "title": snippet.get("title", meta["title"]),
+                        "description_sent": meta.get("description"), "text_updated_at": iso(utcnow())}
         s.commit()
         data = clip_to_dict(clip)
     ctx.bus.publish({"type": "project", "id": project_id})

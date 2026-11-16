@@ -218,6 +218,7 @@ class FakeGoogle:
         self.privacy = "private"
         self.updates: list[dict] = []
         self.expected_size = 0
+        self.refuse_text = False
 
     def handler(self, request):
         import httpx
@@ -266,6 +267,11 @@ class FakeGoogle:
                     "license": "youtube", "embeddable": True}}]})
             body = json.loads(request.content)
             self.updates.append(body)
+            if "snippet" in body:
+                if self.refuse_text:
+                    return httpx.Response(400, json={"error": {"message": "bad title",
+                                                               "errors": [{"reason": "invalidTitle"}]}})
+                return httpx.Response(200, json={"id": "vid123", "snippet": body["snippet"]})
             if not self.locked_private:
                 self.privacy = body["status"]["privacyStatus"]
             return httpx.Response(200, json={"id": "vid123", "status": {"privacyStatus": self.privacy}})

@@ -36,8 +36,9 @@ channel has not been tried yet: it needs the owner's Google Cloud client.
 ## Next
 
 Phase 11 (Creator Studio) is planned in [PHASE11_PLAN.md](PHASE11_PLAN.md)
-and waiting for the owner's approval and answers to its open questions.
-Nothing of it is built.
+and was approved on 2026-11-17, with every proposal adopted. Milestone 11.9
+(the YouTube Shorts checklist) is done. 11.1 starts once the Phase 10 private
+upload is done; the rest is not started.
 
 ## Open items that need the owner
 
@@ -60,7 +61,7 @@ Nothing of it is built.
 
 ## How it has been verified
 
-- 434 automated tests, using stand-ins for the platforms, the speech model,
+- 457 automated tests, using stand-ins for the platforms, the speech model,
   the AI and Google.
 - The service refused to upload a real Short from a video with unconfirmed
   rights (HTTP 409, nothing sent).

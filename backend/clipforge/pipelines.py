@@ -1124,6 +1124,7 @@ def _upload(ctx: StageContext) -> dict:
                     "privacy": (video.get("status") or {}).get("privacyStatus", "private"),
                     "upload_status": (video.get("status") or {}).get("uploadStatus"),
                     "channel": (token.get("channel") or {}).get("title"), "title": body["snippet"]["title"],
+                    "description_sent": (clip.meta or {}).get("description"),
                     "uploaded_at": iso(utcnow()), "uploaded_anyway": bool(override and not (clip.final.get("qc") or {}).get("passed", True)),
                     "state": "uploaded",
                 }

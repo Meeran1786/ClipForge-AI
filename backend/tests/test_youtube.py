@@ -141,7 +141,7 @@ def test_unapproved_or_unconnected_clips_are_not_uploaded(client, client_file, f
     connect(client, client_file, fake_google)
     client.patch(f"/api/projects/{project['id']}/clips/{clip['id']}", json={"review": "rejected"})
     r = client.post(f"/api/projects/{project['id']}/upload", json={"clip_ids": [clip["id"]]})
-    assert r.status_code == 409 and "approved" in r.json()["error"]
+    assert r.status_code == 409 and "Approve the clip first" in r.json()["error"]
 
 
 # ---- uploading -----------------------------------------------------------------------------------------

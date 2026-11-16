@@ -382,6 +382,13 @@ always private. The OAuth flow uses the owner's own "Desktop app" client,
 PKCE, and a loopback return address on this app's own server; the token lives
 in `data\youtube\token.json`. Every call to Google goes through
 `youtube.make_http()`, which the tests replace with a stand-in.
+
+Phase 11.9 adds `youtube.shorts_checklist()`, the one set of YouTube Shorts
+rules (size, length, encoding, sound, quality, title, description, hashtags,
+credit, music licence, kids declaration, channel). `publish_blocker` is that
+checklist without the channel item, so the dashboard's checklist, the upload
+endpoint, the upload stage and the publish step cannot disagree. Only the
+quality item can be passed with "anyway".
 - The app shows YouTube's reused-content risk plainly and never states that
   editing makes footage fair use or that monetisation is guaranteed.
 

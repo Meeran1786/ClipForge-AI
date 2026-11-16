@@ -276,6 +276,15 @@ export interface ClipYouTube {
   failure?: string | null
 }
 
+export interface PublishChecklist {
+  items: { name: string; label: string; status: QcStatus; detail: string; overridable: boolean }[]
+  passed: boolean
+  passed_with_override: boolean
+  fails: number
+  warnings: number
+  text_differs: boolean
+}
+
 export interface ShortRow extends Clip {
   project: { id: number; title: string; rights_status: RightsStatus; creator: string | null }
 }
@@ -621,6 +630,10 @@ export const api = {
     post<Project>(`/api/projects/${projectId}/upload`, { clip_ids: clipIds, override }),
   publishShort: (projectId: number, clipId: number, privacy: 'public' | 'unlisted' | 'private', title: string) =>
     post<Clip>(`/api/projects/${projectId}/clips/${clipId}/publish`, { privacy, title, confirm: true }),
+  publishChecklist: (projectId: number, clipId: number) =>
+    request<PublishChecklist>(`/api/projects/${projectId}/clips/${clipId}/publish-checklist`),
+  sendTextToYouTube: (projectId: number, clipId: number) =>
+    post<Clip>(`/api/projects/${projectId}/clips/${clipId}/youtube-text`),
   refreshShort: (projectId: number, clipId: number) =>
     post<Clip>(`/api/projects/${projectId}/clips/${clipId}/youtube-refresh`),
   editClipText: (

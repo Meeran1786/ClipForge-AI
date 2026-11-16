@@ -26,6 +26,7 @@ import base64
 import hashlib
 import json
 import os
+import re
 import secrets
 import time
 import urllib.parse
@@ -233,22 +234,155 @@ def revoke(settings, http: httpx.Client) -> None:
 # ---- what may be published ---------------------------------------------------------------------
 
 
-def publish_blocker(rights_status: str, clip, override: bool = False) -> str | None:
-    """Why this clip may not go to YouTube, or None. Checked in the API and again before every request."""
+RIGHTS_REFUSAL = ("Refused: the rights to this video are not confirmed. Record that you own it, or the creator's "
+                  "permission with its evidence, before anything is uploaded.")
+
+
+def publish_blocker(rights_status: str, clip, override: bool = False, defaults: dict | None = None) -> str | None:
+    """Why this clip may not go to YouTube, or None: the Shorts checklist, less the channel connection.
+
+    Checked in the API and again in the upload stage, right before any request is sent.
+    """
     if rights_status not in PUBLISHABLE:
-        return ("Refused: the rights to this video are not confirmed. Record that you own it, or the creator's "
-                "permission with its evidence, before anything is uploaded.")
-    if clip.review != "approved":
-        return "Only approved clips are uploaded."
+        return RIGHTS_REFUSAL
+    checklist = shorts_checklist(rights_status, clip, connected=True, channel=None, defaults=defaults or {})
+    return checklist_blocker(checklist, override)
+
+
+# ---- the Shorts publishing checklist ----------------------------------------------------------------
+
+# YouTube's limits, kept in one place because YouTube changes them.
+SHORTS_WIDTH, SHORTS_HEIGHT = 1080, 1920
+SHORTS_MAX_SECONDS = 180  # Shorts may run up to three minutes
+CLAIM_BLOCK_SECONDS = 60  # a Short over one minute with a Content ID claim is blocked by YouTube
+TITLE_MAX, DESCRIPTION_MAX = 100, 5000
+HASHTAGS_IGNORED_OVER = 60  # with more hashtags than this, YouTube ignores all of them
+TRUE_PEAK_MAX = -1.0
+
+
+def _item(name: str, label: str, status: str, detail: str, overridable: bool = False) -> dict[str, Any]:
+    return {"name": name, "label": label, "status": status, "detail": detail, "overridable": overridable}
+
+
+def shorts_checklist(
+    rights_status: str, clip, *, connected: bool, channel: str | None, defaults: dict[str, Any],
+) -> dict[str, Any]:
+    """Everything that must be true before a Short goes to YouTube, each with its reason.
+
+    status: ok | warn | fail. A fail blocks uploading and publishing; a fail marked
+    `overridable` (a failed quality check) can be passed with an explicit "anyway".
+    """
+    items: list[dict[str, Any]] = []
+    add = items.append
     final = clip.final or {}
-    if not final.get("file") or not Path(final["file"]).is_file():
-        return "Render the final Short first."
-    if not clip.meta or not (clip.meta.get("title") or "").strip():
-        return "The Short has no title yet."
-    qc = final.get("qc") or {}
-    if qc and not qc.get("passed", True) and not override:
-        return "It failed its quality checks. Fix it, or upload it anyway."
+    meta = clip.meta or {}
+    title = (meta.get("title") or "").strip()
+    description = meta.get("description") or ""
+
+    if rights_status in PUBLISHABLE:
+        add(_item("rights", "Rights to the source video", "ok",
+                  {"own": "Your own video.", "licensed": "Licensed.",
+                   "creator_permission": "The creator gave permission."}[rights_status]))
+    else:
+        add(_item("rights", "Rights to the source video", "fail",
+                  "Not confirmed. Record that you own it, or the creator's permission with its evidence."))
+    add(_item("approved", "Approved by you", "ok" if clip.review == "approved" else "fail",
+              "Approved." if clip.review == "approved" else "Approve the clip first."))
+
+    rendered = bool(final.get("file")) and Path(final["file"]).is_file()
+    add(_item("rendered", "Final Short rendered", "ok" if rendered else "fail",
+              final.get("name", "") if rendered else "Render the final Short first."))
+    if rendered:
+        size_ok = (final.get("width"), final.get("height")) == (SHORTS_WIDTH, SHORTS_HEIGHT)
+        add(_item("vertical", "Vertical 1080×1920", "ok" if size_ok else "fail",
+                  f"{final.get('width')}×{final.get('height')}"))
+        length = float(final.get("duration") or 0)
+        if length > SHORTS_MAX_SECONDS:
+            add(_item("duration", "Length within the Shorts limit", "fail",
+                      f"{length:.0f} s; Shorts can be at most {SHORTS_MAX_SECONDS // 60} minutes."))
+        elif length > CLAIM_BLOCK_SECONDS and (rights_status != "own" or (clip.music or {}).get("used")):
+            add(_item("duration", "Length within the Shorts limit", "warn",
+                      f"{length:.0f} s. YouTube blocks Shorts over one minute that receive a Content ID claim; "
+                      "this one uses someone else's footage or music."))
+        else:
+            add(_item("duration", "Length within the Shorts limit", "ok", f"{length:.0f} s."))
+        codecs_ok = final.get("video_codec") == "h264" and final.get("audio_codec") in ("aac", None)
+        add(_item("encoding", "H.264 picture, AAC sound", "ok" if codecs_ok else "fail",
+                  f"{final.get('video_codec')} / {final.get('audio_codec') or 'no sound'}"))
+        tp = (final.get("loudness") or {}).get("true_peak")
+        if final.get("audio_codec") is None:
+            add(_item("audio", "Sound", "warn", "The Short has no sound."))
+        elif tp is not None and tp > TRUE_PEAK_MAX + 0.5:
+            add(_item("audio", "Sound", "fail", f"Peaks at {tp:.1f} dBTP: it will distort."))
+        else:
+            lufs = (final.get("loudness") or {}).get("lufs")
+            add(_item("audio", "Sound", "ok", f"{lufs} LUFS, peak {tp} dBTP." if lufs is not None else "Present."))
+        qc = final.get("qc") or {}
+        if qc and not qc.get("passed", True):
+            bad = ", ".join(c["label"] for c in qc.get("checks") or [] if c.get("status") == "fail")
+            add(_item("quality", "Quality checks", "fail", f"Failed: {bad}.", overridable=True))
+        else:
+            add(_item("quality", "Quality checks", "ok", f"Score {qc.get('score', '—')}."))
+
+    if not title:
+        add(_item("title", "Title", "fail", "The Short has no title."))
+    elif len(title) > TITLE_MAX:
+        add(_item("title", "Title", "fail", f"{len(title)} characters; YouTube allows {TITLE_MAX}."))
+    elif "<" in title or ">" in title:
+        add(_item("title", "Title", "warn", "Contains < or >, which YouTube refuses; they will be replaced."))
+    else:
+        add(_item("title", "Title", "ok", f"{len(title)} characters."))
+    if len(description) > DESCRIPTION_MAX:
+        add(_item("description", "Description", "fail", f"{len(description)} characters; YouTube allows {DESCRIPTION_MAX}."))
+    else:
+        add(_item("description", "Description", "ok", f"{len(description)} characters."))
+    tags = len(re.findall(r"(?<![\w&])#\w+", title + " " + description))
+    if tags > HASHTAGS_IGNORED_OVER:
+        add(_item("hashtags", "Hashtags", "fail", f"{tags} hashtags; with more than {HASHTAGS_IGNORED_OVER} YouTube "
+                                                  "ignores every one of them."))
+    else:
+        add(_item("hashtags", "Hashtags", "ok", f"{tags} hashtag(s)."))
+    if rights_status != "own":
+        has_credit = description.lstrip().startswith("Credit:")
+        add(_item("credit", "Creator credited", "ok" if has_credit else "warn",
+                  "The description starts with the credit." if has_credit else
+                  "The credit line is missing from the description. Credit is not permission, but it is usually "
+                  "a condition of it."))
+    music = clip.music or {}
+    if music.get("used"):
+        add(_item("music", "Music licence", "ok" if music.get("licence_name") else "fail",
+                  f"{music.get('title')} · {music.get('licence_name')}" if music.get("licence_name")
+                  else "The music has no licence recorded."))
+    add(_item("kids", "Made-for-kids declaration", "ok",
+              "Declared made for kids." if defaults.get("made_for_kids") else "Declared not made for kids."))
+    add(_item("channel", "Channel connected", "ok" if connected else "fail",
+              (channel or "Connected.") if connected else "Connect your channel in Settings."))
+
+    fails = [i for i in items if i["status"] == "fail"]
+    return {"items": items, "passed": not fails,
+            "passed_with_override": all(i["overridable"] for i in fails), "fails": len(fails),
+            "warnings": sum(1 for i in items if i["status"] == "warn")}
+
+
+def checklist_blocker(checklist: dict[str, Any], override: bool) -> str | None:
+    """The first reason the checklist blocks, or None. `override` passes only a failed quality check."""
+    for item in checklist["items"]:
+        if item["status"] == "fail" and not (override and item["overridable"]):
+            return f"{item['label']}: {item['detail']}"
     return None
+
+
+def update_text(settings, http: httpx.Client, video_id: str, meta: dict[str, Any], category_id: str) -> dict:
+    """Send the Short's edited title, description and tags to its video on YouTube."""
+    snippet = video_body(meta, category_id, False)["snippet"]
+    token = access_token(settings, http)
+    resp = http.put(f"{API}/videos", params={"part": "snippet"}, headers=_auth(token),
+                    json={"id": video_id, "snippet": snippet})
+    if resp.status_code != 200:
+        if resp.status_code in (400, 403):
+            raise Refused(f"YouTube refused the new text: {_google_error(resp)}")
+        raise YouTubeError(f"Could not update the text: {_google_error(resp)}")
+    return resp.json().get("snippet") or snippet
 
 
 # ---- uploading -----------------------------------------------------------------------------------

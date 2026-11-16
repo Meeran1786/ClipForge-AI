@@ -3,6 +3,31 @@
 Requirements that were agreed as a feature, with what is built and what is
 still to come. The phase plan is in [ROADMAP.md](ROADMAP.md).
 
+## Phase 11 — Creator Studio
+
+Requested 2026-11-17 and approved the same day with every proposal of
+[PHASE11_PLAN.md](PHASE11_PLAN.md) section 2 adopted. Platform: YouTube
+Shorts only.
+
+`[x]` built and tested · `[~]` built in part · `[ ]` not built
+
+- [x] 11.9 YouTube Shorts optimisation: checks for vertical size, duration (3
+      minutes, plus the one-minute Content ID warning), encoding and sound,
+      title and description, hashtags, rights, credit, music licence, kids
+      declaration and channel. The checklist is enforced on upload and publish,
+      metadata stays editable and can be sent to an uploaded video, and
+      publishing still needs explicit confirmation. Thumbnail rules come with
+      11.4.
+- [ ] 11.1 Advanced viral intelligence
+- [ ] 11.2 Scene understanding
+- [ ] 11.3 Caption intelligence
+- [ ] 11.4 Title, description and thumbnail studio
+- [ ] 11.5 Manual clip editor
+- [ ] 11.6 Creator brand kit
+- [ ] 11.7 Batch processing
+- [ ] 11.8 Performance feedback loop
+- [ ] 11.10 Unified creator studio
+
 ## Smart Duration and context-aware clip splitting
 
 Requested 2026-11-15. **The core was built in Phase 5 (2026-11-15).** The

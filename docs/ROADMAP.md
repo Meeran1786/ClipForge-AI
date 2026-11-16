@@ -659,6 +659,17 @@ Limits:
   alone would need less.
 - No custom thumbnail, schedule or playlist yet.
 
+## Phase 11 — Creator Studio — approved 2026-11-17, in progress
+
+Ten milestones, planned in [PHASE11_PLAN.md](PHASE11_PLAN.md) and approved by
+the owner with every proposal adopted. YouTube Shorts only.
+
+| Milestone | State |
+| --- | --- |
+| 11.9 YouTube Shorts optimisation | Done: server-side Shorts checklist enforced by upload and publish, edited text sent to uploaded videos; 23 tests |
+| 11.1 Advanced viral intelligence | Next, after the Phase 10 private upload |
+| 11.2–11.8, 11.10 | Not started |
+
 ## Later
 
 Scheduling, multiple channels, batch VOD queues, analytics feedback into

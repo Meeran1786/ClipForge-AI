@@ -19,7 +19,7 @@ a test on real output.
 | [docs/TASKS.md](docs/TASKS.md) | Feature requests broken into items marked built / partly built / not built | When an item changes state |
 | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | Design, and an "as built" note per phase | When a phase changes the design |
 | [README.md](README.md) | What the app does today, how to run and set it up | When what the user sees changes |
-| [docs/PHASE11_PLAN.md](docs/PHASE11_PLAN.md) | Phase 11 plan (Creator Studio), milestones 11.1–11.10 and open decisions; **not approved, nothing built** | When the owner approves or changes it |
+| [docs/PHASE11_PLAN.md](docs/PHASE11_PLAN.md) | Phase 11 plan (Creator Studio), milestones 11.1–11.10; approved 2026-11-17 with all proposals; progress per milestone in its section 7 | After every milestone |
 
 At the end of a phase, all five are brought up to date before the phase is
 reported as done. Record what was tested and how, what failed and was fixed,
@@ -85,6 +85,9 @@ Run from the repository root (`D:\ClipForge-AI`).
   after the AI answers (`metadata.py`); links from the AI are removed.
 - **Quality checks measure the rendered file** (`qc.py`); a fail blocks export
   unless the owner exports anyway.
+- **YouTube Shorts rules live only in `youtube.shorts_checklist()`**; never
+  re-implement a rule in the frontend or another endpoint.
+- **Phase 11 is YouTube Shorts only**: no Reels, TikTok or multi-platform export.
 - **YouTube: private uploads only; public only with the owner's confirmation**
   (`confirm: true` plus the exact title). `publish_blocker` refuses unconfirmed
   rights in the API and again in the upload stage. Never sign in, upload or
