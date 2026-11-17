@@ -167,6 +167,14 @@ class FakeReasoner:
     def ask_json(self, task, schema, images=None, check=None):
         if check:
             check()
+        if "stickers" in schema.get("properties", {}):  # Story mode draft
+            self.story_tasks = getattr(self, "story_tasks", []) + [task]
+            return {"lines": [{"role": "hook", "text": "You will not believe what happens next"},
+                              {"role": "context", "text": "The streamer is about to greet chat"},
+                              {"role": "reaction", "text": "Honestly that was the best hello ever"},
+                              {"role": "outro", "text": "Follow for tomorrow's peak moment"}],
+                    "cards": [{"text": "Moments earlier", "when": "start"}],
+                    "stickers": [{"id": "no_way", "when": "at_payoff"}, {"id": "made_up", "when": "at_payoff"}]}
         if "clips" in schema.get("properties", {}):  # titles and descriptions
             self.meta_tasks.append(task)
             if self.fail_meta:

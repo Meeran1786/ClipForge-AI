@@ -55,6 +55,7 @@ LABELS = {
     "opening": "Strong opening (words in the first seconds)",
     "ending": "Ends naturally",
     "dead_air": "Little dead air",
+    "original": "Your own narration (original commentary)",
     "rights": "Rights allow publishing",
 }
 
@@ -273,12 +274,37 @@ def story_checks(report: dict | None, speech: list[tuple[float, float]] | None, 
     return out
 
 
+ORIGINAL_MIN_SECONDS = 4.0
+
+
+def contribution_check(story: dict | None) -> Check:
+    """Is there enough of the owner's own narration? YouTube's reused-content policy looks for original commentary.
+
+    A warning, never a fail: the owner may post their own footage without narration. Whether a channel is
+    monetised is YouTube's decision; this only reports what the Short contains.
+    """
+    story = story or {}
+    secs, lines = float(story.get("seconds") or 0), int(story.get("lines") or 0)
+    extras = [f"{story.get('cards')} card(s)" if story.get("cards") else "",
+              f"{story.get('stickers')} sticker(s)" if story.get("stickers") else ""]
+    extra = ", ".join(e for e in extras if e)
+    if secs >= ORIGINAL_MIN_SECONDS:
+        return ok("original", f"{secs:.0f} s of your narration in {lines} line(s)" + (f", plus {extra}" if extra else "")
+                  + ".")
+    if secs > 0:
+        return warn("original", f"Only {secs:.1f} s of your narration. Add a context or reaction line: "
+                                "YouTube's reused-content policy looks for original commentary.")
+    return warn("original", "Reused-content risk: no narration of yours. Record the Story lines (Clip editor) so the "
+                            "Short carries your own commentary" + (f"; cards and stickers alone ({extra}) are not enough."
+                                                                   if extra else "."))
+
+
 def run_checks(
     *, info: dict[str, Any], scan: Scan, clip_duration: float, out_size: tuple[int, int],
     loudness: dict[str, Any] | None, loudness_ok: tuple[bool, str] | None, music_used: bool,
     gap: dict[str, Any] | None, expect_sound: bool, captions: dict | None, report: dict | None, valid: bool,
     overridden: bool, others: list[list[str]], rights_status: str,
-    speech: list[tuple[float, float]] | None = None,
+    speech: list[tuple[float, float]] | None = None, story: dict | None = None,
 ) -> dict[str, Any]:
     checks: list[Check] = []
     W, H = out_size
@@ -392,6 +418,8 @@ def run_checks(
         checks.append((warn if overridden else fail)("cut_words", ("Approved anyway: " if overridden else "") + why))
 
     checks += story_checks(report, speech, clip_duration)
+    if story is not None:  # only when the render reports it (direct file checks do not know)
+        checks.append(contribution_check(story))
 
     mine = words_of(captions)
     worst = max((similarity(mine, o) for o in others), default=0.0)

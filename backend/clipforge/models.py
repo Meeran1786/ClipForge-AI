@@ -162,6 +162,8 @@ class Clip(Base):
     # pending | approved | rejected   (the user's decision)
     review: Mapped[str | None] = mapped_column(String(20), default="pending")
     overridden: Mapped[bool | None] = mapped_column(default=False)  # approved despite failing a check
+    # Story mode: the owner's narration lines (text, recording, time), story cards and stickers
+    story: Mapped[dict[str, Any] | None] = mapped_column(JSON, default=None)
 
     project: Mapped[Project] = relationship(back_populates="clips")
 

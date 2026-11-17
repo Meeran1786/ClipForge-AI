@@ -294,8 +294,30 @@ export interface ClipYouTube {
   failure?: string | null
 }
 
+export interface StoryLine {
+  id: string
+  role: 'hook' | 'context' | 'reaction' | 'outro'
+  text: string
+  audio: string | null
+  seconds: number | null
+  at: number | null
+  auto_at?: boolean
+}
+
+export interface Story {
+  lines: StoryLine[]
+  cards: { id: string; text: string; at: number; seconds: number }[]
+  stickers: { id: string; sticker: string; at: number; seconds: number }[]
+  drafted_at: string | null
+  updated_at?: string
+  contribution: { seconds: number; share: number; lines: number; cards: number; stickers: number }
+  in_final: { seconds: number; lines: number } | null
+  render_needed: boolean
+  stickers_available: Record<string, { text: string; moods: string[] }>
+}
+
 export interface ScheduleStatus {
-  settings: { enabled: boolean; auto: boolean; times: string[]; timezone: string }
+  settings: { enabled: boolean; auto: boolean; times: string[]; timezone: string; require_story: boolean }
   upcoming: {
     clip_id: number
     project_id: number
@@ -735,6 +757,24 @@ export const api = {
   publishShort: (projectId: number, clipId: number, privacy: 'public' | 'unlisted' | 'private', title: string) =>
     post<Clip>(`/api/projects/${projectId}/clips/${clipId}/publish`, { privacy, title, confirm: true }),
   schedule: () => request<ScheduleStatus>('/api/schedule'),
+  story: (projectId: number, clipId: number) => request<Story>(`/api/projects/${projectId}/clips/${clipId}/story`),
+  draftStory: (projectId: number, clipId: number) => post<Story>(`/api/projects/${projectId}/clips/${clipId}/story/draft`),
+  saveStory: (projectId: number, clipId: number, s: unknown) =>
+    request<Story>(`/api/projects/${projectId}/clips/${clipId}/story`, { method: 'PUT', body: JSON.stringify(s) }),
+  uploadStoryTake: async (projectId: number, clipId: number, lineId: string, blob: Blob): Promise<Story> => {
+    const form = new FormData()
+    form.append('file', blob, blob.type.includes('mp4') ? 'take.m4a' : 'take.webm')
+    const res = await fetch(`/api/projects/${projectId}/clips/${clipId}/story/lines/${lineId}/audio`, { method: 'POST', body: form })
+    const body = (await res.json().catch(() => null)) as { error?: string } | null
+    if (!res.ok) throw new ApiError(body?.error ?? `Request failed (${res.status})`, res.status)
+    return body as unknown as Story
+  },
+  deleteStoryTake: (projectId: number, clipId: number, lineId: string) =>
+    request<Story>(`/api/projects/${projectId}/clips/${clipId}/story/lines/${lineId}/audio`, { method: 'DELETE' }),
+  storyTakeUrl: (projectId: number, clipId: number, lineId: string, v: number | null) =>
+    `/api/projects/${projectId}/clips/${clipId}/story/lines/${lineId}/audio?v=${v ?? 0}`,
+  importMusicFolder: (folder: string) =>
+    post<{ added: Track[]; skipped: { file: string; reason: string }[] }>('/api/music/import-folder', { folder }),
   putSchedule: (s: Partial<ScheduleStatus['settings']>) =>
     request<ScheduleStatus>('/api/schedule', { method: 'PUT', body: JSON.stringify(s) }),
   scheduleShort: (projectId: number, clipId: number, at?: string) =>

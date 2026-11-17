@@ -197,6 +197,17 @@ FFmpeg. After cloning:
    licence). Without it the app still works but keeps the centre of the
    picture instead of following faces.
 
+## Story mode (your narration)
+
+In the Clip editor, **Story mode** suggests 3–4 short lines for the Short (a hook,
+context, your reaction, an outro), story cards and reaction stickers. Edit the
+lines into your own words and record each one with your microphone right there.
+The stream's sound dips while you speak and your words appear in a narrator box.
+Then render the final Short. Shorts of someone else's stream are only scheduled
+automatically once they carry at least 4 s of your narration. Stickers are drawn
+by ClipForge as text; music can come from a YouTube Audio Library folder
+(Settings → Music library → "Add a folder"), with moods guessed per track.
+
 ## Posting schedule and hooks
 
 - **Schedule** (Generated Shorts page): Shorts are uploaded as private with a

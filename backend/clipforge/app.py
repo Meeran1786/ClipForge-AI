@@ -17,6 +17,7 @@ from . import __version__
 from .api import jobs as jobs_api
 from .api import music as music_api
 from .api import outreach as outreach_api
+from .api import story as story_api
 from .api import projects as projects_api
 from .api import system as system_api
 from .api import youtube as youtube_api
@@ -105,6 +106,7 @@ def create_app(
     app.include_router(projects_api.shorts_router)
     app.include_router(youtube_api.router)
     app.include_router(outreach_api.router)
+    app.include_router(story_api.router)
     app.include_router(jobs_api.router)
 
     @app.websocket("/api/ws")

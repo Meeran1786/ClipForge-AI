@@ -323,6 +323,15 @@ def shorts_checklist(
             add(_item("quality", "Quality checks", "fail", f"Failed: {bad}.", overridable=True))
         else:
             add(_item("quality", "Quality checks", "ok", f"Score {qc.get('score', '—')}."))
+        if rights_status != "own":
+            told = final.get("story") or {}
+            secs = float(told.get("seconds") or 0)
+            if secs >= 4:
+                add(_item("original", "Your own commentary", "ok", f"{secs:.0f} s of your narration."))
+            else:
+                add(_item("original", "Your own commentary", "warn",
+                          "Little or no narration of yours in the final Short. YouTube's reused-content policy "
+                          "looks for original commentary on other people's footage; record the Story lines."))
 
     if not title:
         add(_item("title", "Title", "fail", "The Short has no title."))

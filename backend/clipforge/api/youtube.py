@@ -356,6 +356,7 @@ def refresh(project_id: int, clip_id: int, ctx: AppContext = Depends(get_ctx)) -
 class ScheduleSettings(BaseModel):
     enabled: bool | None = None
     auto: bool | None = None
+    require_story: bool | None = None
     times: list[str] | None = None
     timezone: str | None = None
 

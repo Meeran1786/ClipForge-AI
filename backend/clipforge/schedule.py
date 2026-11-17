@@ -46,7 +46,8 @@ def local_timezone() -> str:
     return "UTC"
 
 
-DEFAULTS: dict[str, Any] = {"enabled": False, "auto": True, "times": ["12:00", "18:00"], "timezone": ""}
+DEFAULTS: dict[str, Any] = {"enabled": False, "auto": True, "times": ["12:00", "18:00"], "timezone": "",
+                            "require_story": True}  # automatic mode waits for the owner's narration
 
 
 def _valid_time(t: str) -> bool:
@@ -84,7 +85,7 @@ def save(s, values: dict[str, Any]) -> dict[str, Any]:
         except (ZoneInfoNotFoundError, ValueError) as exc:
             raise ValueError(f"Unknown time zone: {values['timezone']}") from exc
         cfg["timezone"] = values["timezone"]
-    for k in ("enabled", "auto"):
+    for k in ("enabled", "auto", "require_story"):
         if values.get(k) is not None:
             cfg[k] = bool(values[k])
     row = s.get(Setting, KEY)
@@ -148,6 +149,14 @@ def blocker(s, project: Project, clip: Clip) -> str | None:
     return yt.publish_blocker(project.rights_status, clip, override, youtube_defaults(s))
 
 
+def narrated(clip: Clip) -> bool:
+    """The final render carries the owner's narration, and nothing in the story changed since."""
+    final = clip.final or {}
+    told = final.get("story") or {}
+    updated = (clip.story or {}).get("updated_at") or ""
+    return float(told.get("seconds") or 0) >= 4 and updated <= (final.get("rendered_at") or "")
+
+
 def project_busy(s, project_id: int) -> bool:
     return bool(s.scalar(select(func.count(Job.id)).where(Job.project_id == project_id,
                                                           Job.status.in_(("queued", "running")))))
@@ -192,6 +201,8 @@ def tick(settings, session_factory, worker, now: datetime | None = None) -> int:
             if video.get("video_id") or video.get("publish_at") or video.get("unscheduled"):
                 continue
             if project_busy(s, project.id) or blocker(s, project, clip):
+                continue
+            if cfg.get("require_story") and project.rights_status != "own" and not narrated(clip):
                 continue
             if uploads_today >= MAX_PER_DAY:
                 break

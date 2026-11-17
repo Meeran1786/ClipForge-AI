@@ -619,6 +619,15 @@ function ScheduleCard() {
             <span className="hint block">Fills the free slots of the next {s.horizon_hours} hours.</span>
           </span>
         </label>
+        <label className="flex items-start gap-2 text-sm sm:col-span-3">
+          <input type="checkbox" className="mt-0.5 accent-accent" checked={s.settings.require_story}
+            onChange={(e) => save.mutate({ require_story: e.target.checked })} />
+          <span>
+            Wait for my narration
+            <span className="hint block">Automatic mode only schedules a Short of someone else's stream once its final
+              render has at least 4 s of your recorded Story lines.</span>
+          </span>
+        </label>
       </div>
       <div className="mt-3 flex gap-2">
         <button className="btn" disabled={save.isPending}

@@ -74,8 +74,22 @@ request for 2 Shorts a day for US, UK, Australian and Indian viewers.
 - [ ] Audio re-check of uncertain caption words and hand correction (11.3/11.5).
 - [ ] Clip editor: start/end, zoom and framing adjustments, revisions (11.5).
 - [ ] Gaming HUD safe regions; scene understanding (11.2).
-- [ ] Original commentary / voiceover track (needed for YouTube's reused-content
-      policy; permission alone does not make a clip channel monetisable).
+- [x] **Story mode** (`story.py`, `api/story.py`, Clip editor → Story mode): the AI
+      drafts 3–4 narration lines (hook, context, reaction, outro), story cards and up
+      to 2 reaction stickers; the owner edits and records each line in the browser;
+      recordings are cleaned (rumble cut, silence trimmed, levelled to −16 LUFS) and
+      placed without overlapping. In the render the clip's own sound is lowered about
+      10 dB under the narration (measured in a test: 0.2–0.45 of its level), the music
+      ducks under it, the narration shows in a narrator box, cards and stickers are
+      drawn by the caption engine (text only, nothing to license). New check
+      "Your own narration" (warning under 4 s) in the quality report and the Shorts
+      checklist (other people's footage only); automatic scheduling waits for at
+      least 4 s of narration in the final render ("Wait for my narration", on).
+      Live: the real AI drafted lines for a Tears of Steel clip in 17 s. Not done:
+      a real microphone take rendered end to end (tested with generated tones).
+- [x] **YouTube Audio Library folder import** (Settings → Music library): copies,
+      analyses and records the Audio Library licence; first-guess moods from tempo,
+      beat strength, level and title words (no AI). Tested on generated tracks only.
 - [ ] The benchmark Short `Test_Video_Sapnap_08.mp4` was not supplied; nothing
       was measured against it. Word accuracy and ±100 ms timing targets need a
       manually verified transcript, which does not exist yet.
