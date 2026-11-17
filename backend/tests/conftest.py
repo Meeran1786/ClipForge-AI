@@ -226,6 +226,7 @@ class FakeGoogle:
         self.updates: list[dict] = []
         self.expected_size = 0
         self.refuse_text = False
+        self.publish_at: str | None = None  # a scheduled publish time YouTube kept
 
     def handler(self, request):
         import httpx
@@ -269,9 +270,11 @@ class FakeGoogle:
             return httpx.Response(308, headers={"Range": f"bytes=0-{len(self.received) - 1}"})
         if url.startswith("https://www.googleapis.com/youtube/v3/videos"):
             if request.method == "GET":
-                return httpx.Response(200, json={"items": [{"id": "vid123", "status": {
-                    "privacyStatus": self.privacy, "uploadStatus": "processed", "selfDeclaredMadeForKids": False,
-                    "license": "youtube", "embeddable": True}}]})
+                st = {"privacyStatus": self.privacy, "uploadStatus": "processed", "selfDeclaredMadeForKids": False,
+                      "license": "youtube", "embeddable": True}
+                if self.publish_at:
+                    st["publishAt"] = self.publish_at
+                return httpx.Response(200, json={"items": [{"id": "vid123", "status": st}]})
             body = json.loads(request.content)
             self.updates.append(body)
             if "snippet" in body:
@@ -281,13 +284,19 @@ class FakeGoogle:
                 return httpx.Response(200, json={"id": "vid123", "snippet": body["snippet"]})
             if not self.locked_private:
                 self.privacy = body["status"]["privacyStatus"]
-            return httpx.Response(200, json={"id": "vid123", "status": {"privacyStatus": self.privacy}})
+                self.publish_at = body["status"].get("publishAt")
+            st = {"privacyStatus": self.privacy, **({"publishAt": self.publish_at} if self.publish_at else {})}
+            return httpx.Response(200, json={"id": "vid123", "status": st})
         raise AssertionError(f"unexpected request to {url}")
 
     def _done(self):
         import httpx
 
-        return httpx.Response(200, json={"id": "vid123", "status": {"privacyStatus": "private", "uploadStatus": "uploaded"}})
+        st = {"privacyStatus": "private", "uploadStatus": "uploaded"}
+        asked = (self.uploads[-1].get("status") or {}).get("publishAt") if self.uploads else None
+        if asked and not self.locked_private:
+            self.publish_at = st["publishAt"] = asked
+        return httpx.Response(200, json={"id": "vid123", "status": st})
 
 
 @pytest.fixture(autouse=True)

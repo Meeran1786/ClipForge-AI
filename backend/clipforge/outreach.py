@@ -759,8 +759,9 @@ def tick(settings: Settings, session_factory, now: datetime | None = None, bus=N
 class OutreachWorker:
     """Runs `tick` in the background every so often while the app is open."""
 
-    def __init__(self, settings: Settings, session_factory, bus, interval: float) -> None:
+    def __init__(self, settings: Settings, session_factory, bus, interval: float, job_worker=None) -> None:
         self.settings, self.session_factory, self.bus, self.interval = settings, session_factory, bus, interval
+        self.job_worker = job_worker  # for the posting schedule's automatic uploads
         self._stop = threading.Event()
         self._wake = threading.Event()
         self._thread: threading.Thread | None = None
@@ -787,6 +788,14 @@ class OutreachWorker:
                 tick(self.settings, self.session_factory, bus=self.bus)
             except Exception:  # noqa: BLE001 - keep the loop alive; the error is logged
                 log.exception("Outreach round failed")
+            if self.job_worker is not None:
+                try:
+                    from . import schedule
+
+                    if schedule.tick(self.settings, self.session_factory, self.job_worker):
+                        self.bus.publish({"type": "schedule"})
+                except Exception:  # noqa: BLE001
+                    log.exception("Schedule round failed")
             self._wake.wait(self.interval)
             self._wake.clear()
 

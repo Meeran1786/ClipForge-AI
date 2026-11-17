@@ -70,7 +70,7 @@ def create_app(
     session = make_session_factory(engine)
     bus = EventBus()
     worker = JobWorker(settings, session, bus, pipelines or PIPELINES)
-    outreach = OutreachWorker(settings, session, bus, settings.outreach_interval_seconds)
+    outreach = OutreachWorker(settings, session, bus, settings.outreach_interval_seconds, job_worker=worker)
     ctx = AppContext(settings=settings, engine=engine, session=session, bus=bus, worker=worker, outreach=outreach)
 
     @asynccontextmanager

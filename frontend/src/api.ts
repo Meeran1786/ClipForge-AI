@@ -283,10 +283,34 @@ export interface ClipYouTube {
   title?: string
   uploaded_at?: string
   published_at?: string | null
-  state?: 'uploading' | 'uploaded' | 'removed'
+  state?: 'uploading' | 'uploaded' | 'removed' | 'scheduled' | null
   note?: string | null
+  publish_at?: string | null
+  planned_publish_at?: string | null
+  schedule_note?: string | null
+  scheduled_by?: 'auto' | 'owner' | null
   rejection?: string | null
   failure?: string | null
+}
+
+export interface ScheduleStatus {
+  settings: { enabled: boolean; auto: boolean; times: string[]; timezone: string }
+  upcoming: {
+    clip_id: number
+    project_id: number
+    project: string
+    title: string | null
+    publish_at: string
+    past: boolean
+    video_id: string | null
+    url: string | null
+    state: string | null
+    note: string | null
+  }[]
+  next_slots: string[]
+  connected: boolean
+  horizon_hours: number
+  max_per_day: number
 }
 
 export interface PublishChecklist {
@@ -709,6 +733,13 @@ export const api = {
     post<Project>(`/api/projects/${projectId}/upload`, { clip_ids: clipIds, override }),
   publishShort: (projectId: number, clipId: number, privacy: 'public' | 'unlisted' | 'private', title: string) =>
     post<Clip>(`/api/projects/${projectId}/clips/${clipId}/publish`, { privacy, title, confirm: true }),
+  schedule: () => request<ScheduleStatus>('/api/schedule'),
+  putSchedule: (s: Partial<ScheduleStatus['settings']>) =>
+    request<ScheduleStatus>('/api/schedule', { method: 'PUT', body: JSON.stringify(s) }),
+  scheduleShort: (projectId: number, clipId: number, at?: string) =>
+    post<Clip>(`/api/projects/${projectId}/clips/${clipId}/schedule`, { confirm: true, at: at ?? null }),
+  unscheduleShort: (projectId: number, clipId: number) =>
+    request<Clip>(`/api/projects/${projectId}/clips/${clipId}/schedule`, { method: 'DELETE' }),
   publishChecklist: (projectId: number, clipId: number) =>
     request<PublishChecklist>(`/api/projects/${projectId}/clips/${clipId}/publish-checklist`),
   sendTextToYouTube: (projectId: number, clipId: number) =>

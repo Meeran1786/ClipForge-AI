@@ -76,7 +76,10 @@ from .media import (
     run,
     tool_version,
 )
+from datetime import timedelta
+
 from . import outreach
+from . import schedule as schedule_mod
 from .models import Clip, Job, Moment, Project, Setting, Streamer, Track, TranscriptSegment, iso, utcnow
 from .music import (
     MIN_GAP_DB,
@@ -1145,7 +1148,14 @@ def _upload(ctx: StageContext) -> dict:
                 if why:
                     raise yt.Refused(why)
                 file = Path(clip.final["file"])
-                body = yt.video_body(clip.meta, defaults["category_id"], defaults["made_for_kids"])
+                planned = (clip.youtube or {}).get("publish_at")
+                publish_at = None
+                if planned:
+                    at = schedule_mod._parse(planned)
+                    if at <= utcnow() + timedelta(minutes=5):
+                        raise yt.Refused("Its publish time has passed; schedule it again.")
+                    publish_at = schedule_mod.to_api(at)
+                body = yt.video_body(clip.meta, defaults["category_id"], defaults["made_for_kids"], publish_at)
                 session_url = (clip.youtube or {}).get("session")
 
             def keep_session(url: str, clip_id: int = clip_id) -> None:
@@ -1161,9 +1171,18 @@ def _upload(ctx: StageContext) -> dict:
             video = yt.upload(ctx.settings, http, file, body, session=session_url, on_session=keep_session,
                               on_progress=tick, check=ctx.check)
             token = yt.load_token(ctx.settings) or {}
+            kept = (video.get("status") or {}).get("publishAt")
             with ctx.session() as s:
                 clip = s.get(Clip, clip_id)
+                planned = (clip.youtube or {}).get("publish_at")
+                schedule_note = None
+                if planned and not kept:
+                    schedule_note = ("YouTube did not keep the publish time, so this Short stays private. Videos from "
+                                     "a Google Cloud project YouTube has not audited stay private; publish it in "
+                                     "YouTube Studio, or apply for the audit.")
                 clip.youtube = {
+                    "publish_at": planned if kept or not planned else None, "planned_publish_at": planned,
+                    "schedule_note": schedule_note, "scheduled_by": (clip.youtube or {}).get("scheduled_by"),
                     "video_id": video["id"], "url": yt.shorts_url(video["id"]), "studio_url": yt.studio_url(video["id"]),
                     "privacy": (video.get("status") or {}).get("privacyStatus", "private"),
                     "upload_status": (video.get("status") or {}).get("uploadStatus"),
