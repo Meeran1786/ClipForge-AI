@@ -85,7 +85,9 @@ Options: `--port 9000`, `--no-browser`, `--data-dir <folder>`.
   complete fits, it says so instead of cutting a sentence. Long moments can
   be split into connected Part 1 / Part 2 clips at finished sentences.
 - Every clip has a plain preview, its target against actual length with the
-  reason for any difference, a list of checks it passed, and Approve / Reject.
+  reason for any difference, a list of checks it passed, and Approve / Reject
+  (the same buttons are at the top of the Clip editor's Final Short panel, so
+  you can approve a clip while you are editing it).
   Changing the duration settings cuts the clips again at once, with no AI
   call.
 - Every clip gets captions timed to the spoken words, with the word being

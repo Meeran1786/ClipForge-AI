@@ -185,8 +185,17 @@ function FramingPanel({ project, clip, busy }: { project: Project; clip: Clip; b
 }
 
 function FinalPanel({ project, clip, busy }: { project: Project; clip: Clip; busy: boolean }) {
+  const qc = useQueryClient()
   const started = useStartedJob(project)
   const render = useMutation({ mutationFn: () => api.renderFinal(project.id, [clip.id]), onSuccess: started })
+  const review = useMutation({
+    mutationFn: (v: { review: Clip['review']; override?: boolean }) =>
+      api.reviewClip(project.id, clip.id, v.review, v.override),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ['clips', project.id] })
+      void qc.invalidateQueries({ queryKey: ['shorts'] })
+    },
+  })
   const fin = clip.final
   const approved = clip.review === 'approved'
   return (
@@ -194,6 +203,62 @@ function FinalPanel({ project, clip, busy }: { project: Project; clip: Clip; bus
       title="Final Short"
       aside={fin?.exists ? <Badge tone={fin.passed ? 'good' : 'bad'}>{fin.passed ? 'Ready' : 'A check failed'}</Badge> : null}
     >
+      <div className="mb-4 rounded-md border border-line px-3 py-2.5">
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="text-sm text-soft">Your decision</span>
+          {approved ? (
+            <Badge tone="good">{clip.overridden ? 'Approved anyway' : 'Approved'}</Badge>
+          ) : clip.review === 'rejected' ? (
+            <Badge>Rejected</Badge>
+          ) : (
+            <Badge tone="warn">Waiting for you</Badge>
+          )}
+          {!approved &&
+            (clip.valid ? (
+              <button
+                className="btn btn-primary h-8 px-3"
+                disabled={review.isPending}
+                onClick={() => review.mutate({ review: 'approved' })}
+              >
+                Approve
+              </button>
+            ) : (
+              <button
+                className="btn btn-danger h-8 px-3"
+                disabled={review.isPending}
+                onClick={() => review.mutate({ review: 'approved', override: true })}
+                title="Use this clip even though it did not pass the checks"
+              >
+                Approve anyway
+              </button>
+            ))}
+          {clip.review !== 'rejected' && (
+            <button className="btn h-8 px-3" disabled={review.isPending} onClick={() => review.mutate({ review: 'rejected' })}>
+              Reject
+            </button>
+          )}
+          {clip.review !== 'pending' && (
+            <button
+              className="text-xs text-soft hover:text-ink"
+              disabled={review.isPending}
+              onClick={() => review.mutate({ review: 'pending' })}
+            >
+              Undo
+            </button>
+          )}
+        </div>
+        {!clip.valid && !approved && (
+          <p className="mt-2 text-xs leading-relaxed text-bad">
+            {clip.report.no_fit ?? 'This clip did not pass the checks for a complete ending.'} Approving it anyway
+            uses it as it is.
+          </p>
+        )}
+        {review.isError && (
+          <div className="mt-2">
+            <ErrorNote>{review.error.message}</ErrorNote>
+          </div>
+        )}
+      </div>
       {fin?.exists ? (
         <>
           <dl className="space-y-1 text-sm">
@@ -244,7 +309,7 @@ function FinalPanel({ project, clip, busy }: { project: Project; clip: Clip; bus
           <p className="text-sm text-soft">
             {approved
               ? 'Renders this clip at 1080×1920 with its framing, captions and music, levelled to YouTube’s loudness.'
-              : 'Approve this clip first; only approved clips are rendered as final Shorts.'}
+              : 'Approve this clip above first; only approved clips are rendered as final Shorts.'}
           </p>
           <button className="btn btn-primary mt-3" disabled={!approved || busy || render.isPending} onClick={() => render.mutate()}>
             {render.isPending ? 'Starting…' : 'Render final Short'}
