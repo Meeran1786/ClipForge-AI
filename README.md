@@ -197,6 +197,23 @@ FFmpeg. After cloning:
    licence). Without it the app still works but keeps the centre of the
    picture instead of following faces.
 
+## Posting schedule and hooks
+
+- **Schedule** (Generated Shorts page): Shorts are uploaded as private with a
+  publish time and YouTube makes them public then, even with this computer off.
+  Set daily times in your time zone; "Schedule approved Shorts automatically"
+  fills the next 48 hours of slots. Current setting: 07:30 and 21:30 IST:
+  07:30 is 9 pm ET / 6 pm PT the evening before and 1 pm in Sydney; 21:30 is
+  4 pm in the UK and Indian prime time. YouTube says time of day is not
+  something its Shorts feed optimises for, so after about a month use
+  YouTube Studio → Analytics → Audience → "When your viewers are on YouTube".
+- **Opening hook** (project option): Automatic opens a clip with a 1–3.5 s
+  flash-forward of the payoff when it comes late, then plays the story in
+  order. The quality report now also checks the opening, dead air and the ending.
+- **Monetisation:** YouTube's reused-content policy applies to the whole
+  channel, and a streamer's permission does not exempt clips "with little or no
+  narrative". Add original commentary or editing.
+
 ## Permissions page (asking streamers)
 
 Paste a streamer's YouTube, Twitch or Kick channel link. ClipForge reads their

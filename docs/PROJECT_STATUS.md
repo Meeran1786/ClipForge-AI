@@ -33,6 +33,14 @@ channel has not been tried yet: it needs the owner's Google Cloud client.
 | 9 | Quality checks, titles and descriptions, export | Done |
 | 10 | YouTube publishing | Built; refusal gate passed; private upload not done (owner chose to skip it; optional) |
 
+## 2026-11-18 (macOS copy, owner Meeran)
+
+Runs on macOS (Homebrew ffmpeg-full, Python 3.12, Antigravity CLI). Added: the
+Permissions page (streamer requests from Gmail), the posting schedule (2 a day,
+07:30 and 21:30 IST), the flash-forward hook, the finishing beat and story
+checks. YouTube connected to "Peak Stream Moment"; no Short uploaded yet.
+535 automated tests pass. See TASKS.md, "Shorts quality and growth".
+
 ## Next
 
 Phase 11 (Creator Studio) is planned in [PHASE11_PLAN.md](PHASE11_PLAN.md)

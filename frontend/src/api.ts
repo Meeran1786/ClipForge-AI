@@ -176,6 +176,7 @@ export interface ProjectOptions {
   max_parts: number
   context: ContextLevel
   trim_silence: boolean
+  hook: 'auto' | 'story' | 'cold_open'
   caption_style: CaptionStyle
   music_mode: MusicMode
   music_gap_db: number

@@ -915,7 +915,7 @@ def _render_clip(ctx: StageContext, c: dict, words: list, tracks: dict, options:
     placement = place_text(plan, samples, style.position, style.size, style.outline,
                            (label_text, *label_size(label_text)) if label_text else None,
                            (tag_text, *tag_size(tag_text)) if tag_text else None)
-    lo, hi = segments[0][0], segments[-1][1]
+    lo, hi = min(a for a, _ in segments), max(b for _, b in segments)  # a teaser may come first
     nearby = [w for w in words if float(w["e"]) > lo and float(w["s"]) < hi]
     result = build_captions(nearby, [list(seg) for seg in segments], length, style_in,
                             position=placement["caption_position"], label=placement["label"],
@@ -1234,6 +1234,7 @@ def check_final(settings, dest: Path, c: dict, extra: dict, done: dict, src: tup
         loudness_ok=loudness_verdict(loud), music_used=done["music_used"], gap=gap,
         expect_sound=done["has_audio"] or done["music_used"], captions=extra["captions"], report=extra["report"],
         valid=extra["valid"], overridden=extra["overridden"], others=others, rights_status=rights,
+        speech=done.get("speech"),
     )
     if gap is not None:
         quality["music_gap"] = gap
