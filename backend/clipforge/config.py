@@ -88,9 +88,9 @@ class Settings(BaseSettings):
         return self.projects_dir / str(project_id)
 
     def _tool(self, name: str) -> str | None:
-        bundled = self.ffmpeg_dir / f"{name}.exe"
-        if bundled.is_file():
-            return str(bundled)
+        for bundled in (self.ffmpeg_dir / f"{name}.exe", self.ffmpeg_dir / name):
+            if bundled.is_file():
+                return str(bundled)
         return shutil.which(name)
 
     @property

@@ -197,6 +197,18 @@ FFmpeg. After cloning:
    licence). Without it the app still works but keeps the centre of the
    picture instead of following faces.
 
+## Set up on macOS
+
+1. `brew install python@3.12 python-tk@3.12 ffmpeg-full` (the plain `ffmpeg`
+   formula has no libass, so captions fail)
+2. `/opt/homebrew/bin/python3.12 -m venv backend/.venv`
+3. `backend/.venv/bin/python -m pip install -r backend/requirements.lock.txt`
+4. `backend/.venv/bin/python -m pip install -e backend`
+5. In `frontend`: `npm install`, then `npm run build`
+6. `mkdir -p tools/ffmpeg && ln -sf /opt/homebrew/opt/ffmpeg-full/bin/ffmpeg /opt/homebrew/opt/ffmpeg-full/bin/ffprobe tools/ffmpeg/`
+7. Fonts and face model as in steps 6–7 above; `cp .env.example .env`
+8. Run `./clipforge.sh`
+
 ## Layout
 
 | Path | What |
