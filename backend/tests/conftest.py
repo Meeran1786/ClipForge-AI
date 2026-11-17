@@ -299,6 +299,11 @@ def no_real_google(monkeypatch):
         raise AssertionError("tests must not reach Google")
 
     monkeypatch.setattr(youtube, "make_http", refuse)
+    from clipforge import gmail, outreach
+
+    monkeypatch.setattr(gmail, "make_http", refuse)
+    monkeypatch.setattr(outreach, "make_web", refuse)
+    monkeypatch.setattr(outreach, "ytdlp_info", lambda *_a, **_k: refuse())
 
 
 @pytest.fixture
@@ -328,6 +333,7 @@ def settings(tmp_path: Path) -> Settings:
         ffmpeg_dir=REPO_ROOT / "tools" / "ffmpeg",
         fonts_dir=REPO_ROOT / "tools" / "fonts",
         frontend_dist=tmp_path / "no-dist",
+        outreach_interval_seconds=0,  # tests run the background sender's rounds themselves
     )
     s.ensure_dirs()
     return s

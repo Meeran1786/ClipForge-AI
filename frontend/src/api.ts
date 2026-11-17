@@ -545,6 +545,72 @@ export interface NewProject {
   rights_status: RightsStatus
   rights_note?: string
   options: ProjectOptions
+  permission_id?: number
+}
+
+export type StreamerStatus =
+  | 'looking_up' | 'no_contact' | 'queued' | 'sent' | 'followed_up' | 'replied'
+  | 'approved' | 'declined' | 'no_reply' | 'bounced' | 'failed' | 'paused'
+
+export interface Streamer {
+  id: number
+  url: string
+  platform: 'youtube' | 'twitch' | 'kick'
+  handle: string | null
+  name: string | null
+  followers: number | null
+  channel_url: string | null
+  links: { url: string; found: string }[]
+  emails: { email: string; found: string }[]
+  contact_email: string | null
+  status: StreamerStatus
+  status_detail: string | null
+  subject: string | null
+  body: string | null
+  sent_at: string | null
+  followup_at: string | null
+  reply: { from: string; date: string; snippet: string; text: string } | null
+  evidence: string | null
+  conditions: string | null
+  decided_at: string | null
+  created_at: string
+}
+
+export interface OutreachSettings {
+  auto_send: boolean
+  daily_limit: number
+  spacing_minutes: number
+  followup_days: number
+  close_days: number
+  sender_name: string
+  channel_name: string
+  channel_url: string
+  subject: string
+  body: string
+  followup_body: string
+}
+
+export interface OutreachStatus {
+  client: boolean
+  connected: boolean
+  address: string | null
+  settings: OutreachSettings
+  channel_name: string
+  channel_url: string
+  missing: string | null
+  sent_last_day: number
+  last_error: string | null
+  last_tick: string | null
+  counts: Partial<Record<StreamerStatus, number>>
+}
+
+export interface ApprovedStreamer {
+  id: number
+  name: string
+  platform: string
+  channel_url: string | null
+  conditions: string | null
+  note: string
 }
 
 export class ApiError extends Error {
@@ -673,4 +739,23 @@ export const api = {
   selfTest: (stageSeconds: number) => post<Job>('/api/jobs/selftest', { stage_seconds: stageSeconds }),
   cancelJob: (id: number) => post<Job>(`/api/jobs/${id}/cancel`),
   retryJob: (id: number) => post<Job>(`/api/jobs/${id}/retry`),
+  outreach: () => request<OutreachStatus>('/api/outreach'),
+  outreachSettings: (s: Partial<OutreachSettings>) =>
+    request<OutreachStatus>('/api/outreach/settings', { method: 'PUT', body: JSON.stringify(s) }),
+  outreachPreview: (s: Partial<OutreachSettings>) =>
+    post<{ subject: string; body: string; followup: string }>('/api/outreach/preview', s),
+  gmailConnect: () => post<{ url: string }>('/api/gmail/connect'),
+  gmailDisconnect: () => post<OutreachStatus>('/api/gmail/disconnect'),
+  streamers: () => request<Streamer[]>('/api/streamers'),
+  approvedStreamers: () => request<ApprovedStreamer[]>('/api/streamers/approved'),
+  addStreamer: (url: string, email?: string) => post<Streamer>('/api/streamers', { url, email: email || null }),
+  editStreamer: (id: number, s: { contact_email?: string; subject?: string; body?: string }) =>
+    request<Streamer>(`/api/streamers/${id}`, { method: 'PATCH', body: JSON.stringify(s) }),
+  sendStreamer: (id: number) => post<Streamer>(`/api/streamers/${id}/send`),
+  checkStreamer: (id: number) => post<Streamer>(`/api/streamers/${id}/check`),
+  lookupStreamer: (id: number) => post<Streamer>(`/api/streamers/${id}/lookup`),
+  approveStreamer: (id: number, evidence: string, conditions: string) =>
+    post<Streamer>(`/api/streamers/${id}/approve`, { evidence, conditions }),
+  declineStreamer: (id: number) => post<Streamer>(`/api/streamers/${id}/decline`, {}),
+  deleteStreamer: (id: number) => request<void>(`/api/streamers/${id}`, { method: 'DELETE' }),
 }

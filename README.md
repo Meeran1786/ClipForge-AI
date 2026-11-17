@@ -197,6 +197,24 @@ FFmpeg. After cloning:
    licence). Without it the app still works but keeps the centre of the
    picture instead of following faces.
 
+## Permissions page (asking streamers)
+
+Paste a streamer's YouTube, Twitch or Kick channel link. ClipForge reads their
+public profile and any link-in-bio page for a contact address, writes a
+personal request from your template, and sends it from your Gmail: by default
+at most 5 a day, 20 minutes apart, with one follow-up after 7 days and the
+request closed as "no reply" a fortnight later. Replies are noticed
+automatically and kept in `data/permissions`. Silence is never permission;
+only your "They said yes" click is, and then new projects from that streamer
+get "creator permission" with the record, after a check that each video really
+is theirs. A "no" withdraws it and that address is never written to again.
+
+Gmail uses the same Google Cloud client as YouTube: enable the Gmail API in
+that project, then Connect Gmail on the Permissions page. Twitch profile text
+needs `TWITCH_CLIENT_ID` and `TWITCH_CLIENT_SECRET` in `.env`. YouTube hides
+many business emails behind a CAPTCHA ("View email address"), which ClipForge
+does not get past: paste those in by hand.
+
 ## Set up on macOS
 
 1. `brew install python@3.12 python-tk@3.12 ffmpeg-full` (the plain `ffmpeg`

@@ -76,7 +76,8 @@ from .media import (
     run,
     tool_version,
 )
-from .models import Clip, Job, Moment, Project, Setting, Track, TranscriptSegment, iso, utcnow
+from . import outreach
+from .models import Clip, Job, Moment, Project, Setting, Streamer, Track, TranscriptSegment, iso, utcnow
 from .music import (
     MIN_GAP_DB,
     TrackInfo,
@@ -158,9 +159,30 @@ def _metadata(ctx: StageContext) -> dict:
         project.source_meta = meta.to_dict()
         if meta.title and project.title == default_link_title(kind):
             project.title = meta.title[:300]
+        refusal = _permission_mismatch(s, project, meta)
+        if refusal:
+            project.rights_status, project.permission_id = "unverified", None
+            project.rights_note = refusal
+            write_rights_file(ctx.settings, project)
         s.commit()
     ctx.publish_project()
+    if refusal:
+        raise IngestRefused(refusal, "rights", hint=False)
     return meta.to_dict()
+
+
+def _permission_mismatch(s, project: Project, meta) -> str | None:
+    """A permission recorded for one streamer must not cover someone else's video."""
+    if project.permission_id is None:
+        return None
+    streamer = s.get(Streamer, project.permission_id)
+    who = (streamer.name or streamer.handle) if streamer else "that streamer"
+    if streamer is None or streamer.status != "approved":
+        return f"Not downloaded: the permission from {who} is no longer recorded as approved."
+    if outreach.belongs_to(streamer, meta.creator, meta.creator_url) is False:
+        return (f"Not downloaded: this video is from “{meta.creator or meta.creator_url}”, not from {who}, "
+                "whose permission was recorded. Choose the right streamer, or record this creator's permission.")
+    return None
 
 
 def _download(ctx: StageContext) -> dict:

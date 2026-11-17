@@ -103,6 +103,8 @@ class ProjectCreate(BaseModel):
     rights_status: RightsStatus = "unverified"
     rights_note: str | None = Field(default=None, max_length=2000)
     options: ProjectOptions = Field(default_factory=ProjectOptions)
+    # use the permission recorded for this streamer on the Permissions page
+    permission_id: int | None = None
 
 
 class RightsUpdate(BaseModel):
@@ -209,6 +211,7 @@ def project_to_dict(p: Project, *, clip_count: int = 0) -> dict[str, Any]:
         "creator": p.creator,
         "rights_status": p.rights_status,
         "rights_note": p.rights_note,
+        "permission_id": p.permission_id,
         "options": normalise_options(p.options),
         "media": p.media,
         "has_thumbnail": bool(p.thumbnail),
