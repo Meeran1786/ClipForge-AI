@@ -1,0 +1,36 @@
+# English-language Just Chatting streamers on Twitch, from TwitchMetrics' top 50
+# (last 30 days, as of 17 Nov 2026). Paste this whole file into
+# Permissions → Ask a streamer → "Paste a whole list".
+# Lines starting with # are ignored. Order matters: ClipForge emails the oldest
+# first, so the mid-size streamers (most likely to answer) come first.
+
+# --- Mid-size: best chance of a reply ---
+https://www.twitch.tv/pleasingpoet
+https://www.twitch.tv/robcdee
+https://www.twitch.tv/arky
+https://www.twitch.tv/yugi2x
+https://www.twitch.tv/hitch
+https://www.twitch.tv/jinnytty
+https://www.twitch.tv/plaqueboymax
+https://www.twitch.tv/yourragegaming
+https://www.twitch.tv/laynalazar
+https://www.twitch.tv/angryginge13
+https://www.twitch.tv/evelynomadera
+https://www.twitch.tv/joe_bartolozzi
+https://www.twitch.tv/cdawg
+https://www.twitch.tv/ludwig
+https://www.twitch.tv/qtcinderella
+https://www.twitch.tv/ironmouse
+
+# --- Biggest: often managed by agencies, slower to answer ---
+https://www.twitch.tv/ohnepixel
+https://www.twitch.tv/wendolynortizz
+https://www.twitch.tv/jasontheween
+https://www.twitch.tv/lacy
+https://www.twitch.tv/stableronaldo
+https://www.twitch.tv/hasanabi
+https://www.twitch.tv/zackrawrr
+
+# Tip: if you find a streamer's business email yourself (YouTube "View email
+# address", their Twitch panels or Discord), put it after the link:
+# https://www.twitch.tv/name, business@example.com

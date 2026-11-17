@@ -386,3 +386,27 @@ def test_the_template_preview_and_unknown_fields(client):
                                                   "subject": "Hi {streamer} from {channel_name} {oops}"}).json()
     assert r["subject"] == "Hi ExampleStreamer from Peak Stream Moments {oops}"
     assert "ExampleStreamer" in r["followup"]
+
+
+def test_a_whole_list_is_added_at_once_and_looked_up_a_few_at_a_time(client, settings, profiles):
+    for i in range(7):
+        profiles[f"chat{i}"] = profile(f"chat{i}", f"biz@chat{i}.test")
+    client.post("/api/streamers", json={"url": "https://www.twitch.tv/chat0"})
+    text = "\n".join([
+        "# my Just Chatting list",
+        "https://www.twitch.tv/chat0",                    # already on the list
+        *[f"twitch.tv/chat{i}" for i in range(1, 7)],
+        "https://www.twitch.tv/chat1",                    # listed twice
+        "https://www.youtube.com/@SomeOne, mgmt@someone.test",
+        "not a link",
+    ])
+    r = client.post("/api/streamers/bulk", json={"text": text}).json()
+    assert len(r["added"]) == 7 and len(r["skipped"]) == 3
+    reasons = " ".join(x["reason"] for x in r["skipped"])
+    assert "Already on the list" in reasons and "twice" in reasons and "Paste a YouTube" in reasons
+    yt_row = next(a for a in r["added"] if a["platform"] == "youtube")
+    assert yt_row["handle"] == "someone" and yt_row["contact_email"] == "mgmt@someone.test"
+    assert tick(client, settings)["looked_up"] == outreach.LOOKUPS_PER_ROUND, "a long list does not hold up sending"
+    tick(client, settings)
+    statuses = [s["status"] for s in client.get("/api/streamers").json()]
+    assert "looking_up" not in statuses

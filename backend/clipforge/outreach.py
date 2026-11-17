@@ -96,6 +96,7 @@ DEFAULTS: dict[str, Any] = {
 }
 LIMITS = {"daily_limit": (1, 20), "spacing_minutes": (5, 24 * 60), "followup_days": (2, 30), "close_days": (3, 60)}
 CHECK_MINUTES = 10  # how often an open thread is read for a reply
+LOOKUPS_PER_ROUND = 5  # a long list is looked up a few at a time
 
 # Pages people use as a "link in bio"; their contact addresses are often only there.
 LINK_HUBS = ("linktr.ee", "beacons.ai", "bio.link", "solo.to", "lnk.bio", "campsite.bio", "carrd.co",
@@ -612,7 +613,8 @@ def tick(settings: Settings, session_factory, now: datetime | None = None, bus=N
 
     with session_factory() as s:
         cfg = effective(settings, load_settings(s))
-        for st in s.scalars(select(Streamer).where(Streamer.status == "looking_up")).all():
+        waiting = select(Streamer).where(Streamer.status == "looking_up").order_by(Streamer.id).limit(LOOKUPS_PER_ROUND)
+        for st in s.scalars(waiting).all():
             try:
                 apply_profile(s, st, lookup(settings, st.url), cfg)
             except LookupError_ as exc:

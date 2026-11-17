@@ -185,7 +185,49 @@ function AddStreamer() {
         channel's About page (it needs a CAPTCHA, which ClipForge does not get past): open it and paste the address here.
       </p>
       {add.error && <div className="mt-3"><ErrorNote>{add.error.message}</ErrorNote></div>}
+      <BulkAdd />
     </Section>
+  )
+}
+
+function BulkAdd() {
+  const qc = useQueryClient()
+  const [text, setText] = useState('')
+  const bulk = useMutation({
+    mutationFn: () => api.addStreamers(text),
+    onSuccess: (r) => {
+      if (r.skipped.length === 0) setText('')
+      void qc.invalidateQueries({ queryKey: ['streamers'] })
+    },
+  })
+  const count = text.split('\n').filter((l) => l.trim() && !l.trim().startsWith('#')).length
+  return (
+    <details className="mt-4 border-t border-line pt-4">
+      <summary className="cursor-pointer text-sm font-medium">Paste a whole list</summary>
+      <p className="hint mt-2">
+        One streamer per line: a channel link, optionally followed by a comma and their email. Lines starting with # are
+        ignored. They are looked up a few at a time, and the emails go out within your daily limit, oldest first.
+      </p>
+      <textarea aria-label="Streamer list" className="input mt-2 min-h-48 font-mono text-xs"
+        placeholder={'https://www.twitch.tv/name\nhttps://www.youtube.com/@name, business@example.com\nkick.com/name'}
+        value={text} onChange={(e) => setText(e.target.value)} />
+      <div className="mt-2 flex items-center gap-3">
+        <button className="btn btn-primary" disabled={count === 0 || bulk.isPending} onClick={() => bulk.mutate()}>
+          Add {count || ''} streamer{count === 1 ? '' : 's'}
+        </button>
+        {bulk.data && (
+          <span className="text-sm text-soft">
+            Added {bulk.data.added.length}{bulk.data.skipped.length ? `, skipped ${bulk.data.skipped.length}` : ''}.
+          </span>
+        )}
+      </div>
+      {bulk.data && bulk.data.skipped.length > 0 && (
+        <ul className="mt-2 space-y-1 text-xs text-soft">
+          {bulk.data.skipped.map((x, i) => <li key={i}><span className="text-ink">{x.line}</span>: {x.reason}</li>)}
+        </ul>
+      )}
+      {bulk.error && <div className="mt-3"><ErrorNote>{bulk.error.message}</ErrorNote></div>}
+    </details>
   )
 }
 

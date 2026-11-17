@@ -32,6 +32,12 @@ class AddStreamer(BaseModel):
     email: str | None = Field(default=None, max_length=320)
 
 
+class BulkStreamers(BaseModel):
+    """One streamer per line: a channel link, optionally followed by a comma and an email."""
+
+    text: str = Field(min_length=1, max_length=50000)
+
+
 class EditStreamer(BaseModel):
     contact_email: str | None = Field(default=None, max_length=320)
     subject: str | None = Field(default=None, max_length=300)
@@ -214,6 +220,53 @@ def add_streamer(body: AddStreamer, ctx: AppContext = Depends(get_ctx)) -> dict:
         s.add(st)
         s.commit()
         return _done(ctx, st)
+
+
+@router.post("/streamers/bulk", status_code=201)
+def add_many(body: BulkStreamers, ctx: AppContext = Depends(get_ctx)) -> dict:
+    """Add a whole list at once. Each is looked up in the background; sending keeps the daily limit."""
+    import re
+
+    lines = [ln.strip() for ln in body.text.splitlines() if ln.strip() and not ln.strip().startswith("#")]
+    if len(lines) > 300:
+        raise HTTPException(422, "Add at most 300 streamers at a time.")
+    added, skipped = [], []
+    with ctx.session() as s:
+        seen: set[tuple[str, str]] = set()
+        for line in lines:
+            parts = [p.strip() for p in re.split(r"[,;\t]| {2,}", line) if p.strip()]
+            url = next((p for p in parts if "@" not in p or p.startswith(("http", "www.", "youtube.com"))), parts[0])
+            email = next((p.lower() for p in parts if p is not url and re.match(EMAIL, p)), None)
+            try:
+                platform, handle, channel_id = ox.parse_link(url)
+            except ox.LookupError_ as exc:
+                skipped.append({"line": line, "reason": str(exc)})
+                continue
+            key = (platform, handle or channel_id or url)
+            if key in seen:
+                skipped.append({"line": line, "reason": "Listed twice."})
+                continue
+            seen.add(key)
+            if handle or channel_id:
+                q = select(Streamer).where(Streamer.platform == platform)
+                q = q.where(Streamer.handle == handle) if handle else q.where(Streamer.channel_id == channel_id)
+                existing = s.scalars(q).first()
+                if existing is not None:
+                    skipped.append({"line": line, "reason": f"Already on the list ({STATUS_WORD.get(existing.status, existing.status)})."})
+                    continue
+            st = Streamer(url=ox.normalise(url), platform=platform, handle=handle, channel_id=channel_id, name=handle,
+                          contact_email=email, status="looking_up", status_detail="Waiting to read their public profile…")
+            s.add(st)
+            s.flush()
+            added.append(ox.streamer_to_dict(st))
+        s.commit()
+    ctx.bus.publish({"type": "outreach"})
+    _wake(ctx)
+    return {"added": added, "skipped": skipped}
+
+
+STATUS_WORD = {"approved": "permission given", "declined": "declined", "sent": "asked", "followed_up": "asked",
+               "queued": "queued", "replied": "replied", "no_reply": "no reply", "no_contact": "needs an email"}
 
 
 @router.patch("/streamers/{streamer_id}")

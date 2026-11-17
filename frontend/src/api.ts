@@ -749,6 +749,8 @@ export const api = {
   streamers: () => request<Streamer[]>('/api/streamers'),
   approvedStreamers: () => request<ApprovedStreamer[]>('/api/streamers/approved'),
   addStreamer: (url: string, email?: string) => post<Streamer>('/api/streamers', { url, email: email || null }),
+  addStreamers: (text: string) =>
+    post<{ added: Streamer[]; skipped: { line: string; reason: string }[] }>('/api/streamers/bulk', { text }),
   editStreamer: (id: number, s: { contact_email?: string; subject?: string; body?: string }) =>
     request<Streamer>(`/api/streamers/${id}`, { method: 'PATCH', body: JSON.stringify(s) }),
   sendStreamer: (id: number) => post<Streamer>(`/api/streamers/${id}/send`),
