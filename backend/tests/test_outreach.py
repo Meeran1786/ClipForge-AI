@@ -20,6 +20,8 @@ from clipforge.ingest import SourceMeta
 from clipforge.models import Project, Streamer, utcnow
 from clipforge.pipelines import _permission_mismatch
 
+REAL_LOOKUP = outreach.lookup  # kept before any test replaces it
+
 from .conftest import wait_for
 
 CLIENT = {"installed": {"client_id": "abc.apps.googleusercontent.com", "client_secret": "s3cret",
@@ -410,3 +412,52 @@ def test_a_whole_list_is_added_at_once_and_looked_up_a_few_at_a_time(client, set
     tick(client, settings)
     statuses = [s["status"] for s in client.get("/api/streamers").json()]
     assert "looking_up" not in statuses
+
+
+def _twitch_with_youtube(monkeypatch, channels: dict, pages: dict):
+    """A Twitch profile with an empty bio, and whatever same-name YouTube channels exist."""
+    monkeypatch.setattr(outreach, "_twitch", lambda settings, web, handle, url: outreach.Profile(
+        platform="twitch", handle=handle, name=handle.title(), channel_url=f"https://www.twitch.tv/{handle}"))
+
+    def info(url):
+        handle = url.rstrip("/").rsplit("@", 1)[1]
+        if handle not in channels:
+            raise RuntimeError("HTTP Error 404")
+        return channels[handle]
+
+    monkeypatch.setattr(outreach, "ytdlp_info", info)
+
+    def web(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, text=pages.get(str(request.url), ""))
+
+    monkeypatch.setattr(outreach, "make_web", lambda: httpx.Client(transport=httpx.MockTransport(web)))
+
+
+def test_a_same_name_youtube_channel_that_links_back_gives_the_email(monkeypatch, settings):
+    _twitch_with_youtube(monkeypatch, {"robcdee": {"channel": "robcdee", "description": "biz: rob@biz.test",
+                                                   "channel_url": "https://www.youtube.com/channel/UCrob"}},
+                         {"https://www.youtube.com/@robcdee/about": '<a href="https://www.twitch.tv/robcdee">Twitch</a>'})
+    p = outreach.lookup(settings, "https://www.twitch.tv/robcdee")
+    assert outreach.best_email(p.emails) == "rob@biz.test"
+    assert "links back" in p.emails[0]["found"]
+
+
+def test_a_same_name_channel_that_does_not_link_back_is_only_a_suggestion(monkeypatch, settings, client, profiles):
+    _twitch_with_youtube(monkeypatch, {"poet": {"channel": "Poet", "description": "contact poet@mail.test"}}, {})
+    p = REAL_LOOKUP(settings, "https://www.twitch.tv/poet")
+    assert p.emails[0]["unconfirmed"] and outreach.best_email(p.emails) is None, "never chosen on its own"
+    profiles["poet"] = p
+    sid = client.post("/api/streamers", json={"url": "https://www.twitch.tv/poet"}).json()["id"]
+    tick(client, settings)
+    st = streamer(client, sid)
+    assert st["status"] == "no_contact" and "poet@mail.test" in st["status_detail"] and st["contact_email"] is None
+
+
+def test_a_same_name_channel_with_another_name_or_none_is_ignored(monkeypatch, settings):
+    _twitch_with_youtube(monkeypatch, {"sam": {"channel": "Samantha Cooks", "description": "sam@cook.test"}}, {})
+    p = outreach.lookup(settings, "https://www.twitch.tv/sam")
+    assert p.emails == [] and any("does not match" in n for n in p.notes)
+    assert outreach.lookup(settings, "https://www.twitch.tv/nobody").emails == []
+    # a link to twitch.tv/sam_other is not a link back to twitch.tv/sam
+    _twitch_with_youtube(monkeypatch, {"sam": {"channel": "Sam", "description": "x@sam.test https://twitch.tv/sam_other"}}, {})
+    assert outreach.lookup(settings, "https://www.twitch.tv/sam").emails[0].get("unconfirmed")

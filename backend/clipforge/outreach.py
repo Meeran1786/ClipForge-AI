@@ -408,6 +408,8 @@ def lookup(settings: Settings, url: str) -> Profile:
         # One step further: a YouTube channel listed on a Twitch/Kick profile, and link-in-bio pages.
         if platform != "youtube":
             yt_link = next((link["url"] for link in p.links if "youtube.com/" in link["url"]), None)
+            if not yt_link and p.handle:
+                same_name_youtube(web, p)
             if yt_link:
                 try:
                     other = _youtube(yt_link, *parse_link(yt_link)[1:])
@@ -437,8 +439,60 @@ def lookup(settings: Settings, url: str) -> Profile:
     return p
 
 
+def _norm(name: str | None) -> str:
+    return re.sub(r"[^a-z0-9]", "", (name or "").lower())
+
+
+def same_name_youtube(web: httpx.Client, p: Profile) -> None:
+    """Look for the streamer's email on a YouTube channel with the same name.
+
+    Most streamers use one name everywhere, but a same-name channel can belong to
+    someone else. So an address from it is used only when the channel links back
+    to this Twitch/Kick channel; otherwise it is kept as a suggestion the owner
+    must confirm, and nothing is sent to it.
+    """
+    url = f"https://www.youtube.com/@{p.handle}"
+    try:
+        info = ytdlp_info(url)
+    except Exception as exc:  # noqa: BLE001 - no such channel, or YouTube refused: just no extra source
+        log.info("No same-name YouTube channel for %s: %s", p.handle, str(exc)[:120])
+        return
+    title = info.get("channel") or info.get("uploader") or ""
+    if _norm(title) not in {_norm(p.handle), _norm(p.name)} or not _norm(title):
+        p.notes.append(f"The YouTube channel @{p.handle} is called “{title}”, which does not match; it was not used.")
+        return
+    description = info.get("description") or ""
+    page = ""
+    try:
+        r = web.get(url + "/about")
+        if r.status_code == 200:
+            page = urllib.parse.unquote(r.text)
+    except httpx.HTTPError:
+        pass
+    home = {"twitch": "twitch.tv", "kick": "kick.com"}.get(p.platform, "")
+    links_back = bool(home) and re.search(rf"{re.escape(home)}/{re.escape(p.handle)}(?![A-Za-z0-9_])",
+                                          description + "\n" + page, re.I) is not None
+    found = find_emails(description) + [e for e in find_emails(page)
+                                        if not re.search(r"(youtube|google|gstatic|ggpht|ytimg)\.", e)]
+    channel_link = info.get("channel_url") or url
+    if all(link["url"] != channel_link for link in p.links):
+        p.links.append({"url": channel_link, "found": "same-name YouTube channel"})
+    for e in dict.fromkeys(found):
+        if any(x["email"] == e for x in p.emails):
+            continue
+        if links_back:
+            p.emails.append({"email": e, "found": f"YouTube @{p.handle} (links back to their {PLATFORM_NAME[p.platform]})"})
+        else:
+            p.emails.append({"email": e, "found": f"YouTube @{p.handle}: same name, but it does not link back. "
+                                                  "Check it is them before using it", "unconfirmed": True})
+
+
+PLATFORM_NAME = {"youtube": "YouTube", "twitch": "Twitch", "kick": "Kick"}
+
+
 def best_email(emails: list[dict[str, str]]) -> str | None:
-    """A business-looking address first, then the first one found."""
+    """A business-looking address first, then the first one found. Unconfirmed suggestions are never chosen."""
+    emails = [e for e in emails if not e.get("unconfirmed")]
     if not emails:
         return None
     for e in emails:
@@ -488,7 +542,12 @@ def apply_profile(s, st: Streamer, p: Profile, cfg: dict[str, Any]) -> None:
     notes = " ".join(p.notes)
     if not st.contact_email:
         st.status = "no_contact"
-        st.status_detail = ("No public contact address was found. " + notes).strip()
+        maybe = [e["email"] for e in p.emails if e.get("unconfirmed")]
+        if maybe:
+            st.status_detail = (f"Possible address from a same-name YouTube channel: {', '.join(maybe)}. It does not "
+                                "link back to them, so check it is really them, then press Use this email.")
+        else:
+            st.status_detail = ("No public contact address was found. " + notes).strip()
         return
     queue(s, st, cfg)
 
