@@ -119,10 +119,17 @@ class FakeTranscriber:
     def __init__(self) -> None:
         self.calls: list[float] = []
         self.fail_on_call: int | None = None
+        self.memory_limit_seconds: float | None = None  # audio longer than this "runs out of memory"
+        self.closed = False
+
+    def close(self) -> None:
+        self.closed = True
 
     def transcribe(self, audio, language, on_progress=None):
         seconds = len(audio) / 16000
         self.calls.append(round(seconds, 2))
+        if self.memory_limit_seconds is not None and seconds > self.memory_limit_seconds:
+            raise MemoryError(f"Unable to allocate {seconds * 1.0:.0f}. MiB for an array")
         if self.fail_on_call is not None and len(self.calls) == self.fail_on_call:
             raise RuntimeError("speech engine crashed")
         if on_progress:

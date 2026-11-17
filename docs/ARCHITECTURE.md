@@ -361,6 +361,23 @@ each chunk saved as it finishes, word timings corrected against the measured
 silences). Results live in `audio_signals.json`, `video_signals.json` and the
 `transcript_segments` table.
 
+Memory (found 2026-11-17 on the owner's PC, a 42-minute video: "Unable to
+allocate 188 MiB" and "mkl_malloc: failed to allocate memory"). The speech
+features need about 1 MB of memory per second of audio (measured), so a
+ten-minute chunk needs about 600 MB at its peak, on top of the model. Windows
+refuses such a request once other programs have used up RAM plus the page
+file (which sits on C:, and cannot grow when C: is full). Three things now
+happen in `analysis/transcript.py`:
+- a chunk that runs out of memory is cut in two at its quietest point near the
+  middle and each half is done on its own, down to 30 s (`transcribe_span`);
+- the model is always released when the stage ends or fails (`close()` in a
+  `finally`): before, a failed attempt kept it, and the retry loaded a second
+  copy on top, which is what produced `mkl_malloc`;
+- if even a small piece does not fit, the stage fails with `OutOfMemory`,
+  which says how much memory Windows has left and what to do, and is not
+  retried at once (`memory.py`). Pressing Retry resumes from the last
+  finished chunk.
+
 The owner's Google password is never needed by the app and must not be stored
 or shared.
 

@@ -120,6 +120,11 @@ Run from the repository root (`D:\ClipForge-AI`).
   the project's `framing\` folder; changing the layout re-plans from them.
 - When measuring audio in a test, compare the same channel of both files:
   FFmpeg's stereo-to-mono downmix adds the channels and reads 3 dB louder.
+- **Memory is scarce on this PC.** Speech-to-text releases its model in a
+  `finally` and does an out-of-memory chunk in halves (`transcribe_span`);
+  keep any new heavy step able to do the same. Never keep a model, or a big
+  array, alive past the stage that needs it (a failed attempt's traceback holds
+  its frames until the `except` block ends).
 - **Database changes** must be new nullable columns: `db.add_missing_columns`
   upgrades existing databases in place.
 - **Heavy files live on D:.** C: is nearly full.

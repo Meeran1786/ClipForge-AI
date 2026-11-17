@@ -8,6 +8,7 @@ so a word is not cut in half.
 
 from __future__ import annotations
 
+import gc
 import logging
 import os
 from dataclasses import dataclass, field
@@ -15,12 +16,32 @@ from typing import Any, Callable, Protocol
 
 import numpy as np
 
+from .. import memory
 from ..config import Settings
 
 log = logging.getLogger("clipforge.transcript")
 
 SAMPLE_RATE = 16000
 EDGE_SEARCH = 30.0  # seconds either side of the ideal chunk edge to look for quiet
+# Smallest stretch worth splitting when memory runs out. The speech features alone need about 1 MB per
+# second of audio (measured), so 30 s is a few dozen MB: if that fails, the computer is out of memory.
+MIN_SPAN = 30.0
+
+
+class OutOfMemory(RuntimeError):
+    """Not enough memory for speech-to-text, even in small pieces. Closing other programs helps; retrying at once does not."""
+
+    no_retry = True
+
+
+def is_memory_error(exc: BaseException) -> bool:
+    """numpy's "Unable to allocate", Python's MemoryError, and the maths library's "mkl_malloc" failure."""
+    if isinstance(exc, MemoryError):  # numpy's _ArrayMemoryError is one
+        return True
+    text = str(exc).lower()
+    return isinstance(exc, RuntimeError) and any(
+        key in text for key in ("mkl_malloc", "failed to allocate", "unable to allocate", "out of memory", "bad_alloc")
+    )
 
 # Speech-detection settings by Settings.speech_detection ("off" skips the filter).
 VAD_PRESETS: dict[str, dict[str, Any] | None] = {
@@ -94,13 +115,28 @@ class WhisperTranscriber:
         self.name = f"whisper-{settings.whisper_model}"
         self._detection = settings.speech_detection if settings.speech_detection in ("normal", "off") else "sensitive"
         settings.models_dir.mkdir(parents=True, exist_ok=True)
-        self._model = WhisperModel(
-            settings.whisper_model,
-            device="cpu",
-            compute_type="int8",
-            cpu_threads=max(1, min(4, (os.cpu_count() or 2) // 2)),
-            download_root=str(settings.models_dir),
-        )
+        try:
+            self._model = WhisperModel(
+                settings.whisper_model,
+                device="cpu",
+                compute_type="int8",
+                cpu_threads=max(1, min(4, (os.cpu_count() or 2) // 2)),
+                download_root=str(settings.models_dir),
+            )
+        except Exception as exc:
+            if not is_memory_error(exc):
+                raise
+            reason = str(exc)
+        else:
+            return
+        # (outside the except block, so the failed attempt's memory is not held while this is raised)
+        raise OutOfMemory(memory.low_memory_message("the speech model") + f" [{reason}]")
+
+    def close(self) -> None:
+        """Give the model's memory back now. A failed attempt that kept it made the retry load a second copy."""
+        model, self._model = getattr(self, "_model", None), None
+        del model
+        gc.collect()
 
     def transcribe(
         self,
@@ -108,6 +144,8 @@ class WhisperTranscriber:
         language: str | None,
         on_progress: Callable[[float], None] | None = None,
     ) -> tuple[list[Segment], str | None]:
+        if self._model is None:
+            raise RuntimeError("The speech model has been released")
         length = max(len(audio) / SAMPLE_RATE, 0.01)
         raw, info = self._model.transcribe(
             audio,
@@ -150,6 +188,66 @@ def make_transcriber(settings: Settings) -> Transcriber:
 def model_is_downloaded(settings: Settings) -> bool:
     folder = settings.models_dir / f"models--Systran--faster-whisper-{settings.whisper_model}"
     return folder.is_dir() and any(folder.rglob("model.bin"))
+
+
+def split_point(a: float, b: float, loudness: list[float], hop: float) -> float:
+    """Where to cut [a, b] in two: the quietest moment near the middle, so no word is cut in half."""
+    mid = (a + b) / 2
+    lo, hi = int((mid - 0.15 * (b - a)) / hop), int((mid + 0.15 * (b - a)) / hop)
+    window = loudness[max(lo, 0):hi] if loudness and hop > 0 else []
+    if len(window):
+        # among equally quiet places (a flat curve) take the one nearest the middle
+        pull = np.abs(np.arange(len(window)) - len(window) / 2) * 1e-6
+        return round((max(lo, 0) + int(np.argmin(np.asarray(window, dtype=float) + pull)) + 0.5) * hop, 2)
+    return round(mid, 2)
+
+
+def transcribe_span(
+    transcriber: Transcriber,
+    audio_path: str,
+    a: float,
+    b: float,
+    language: str | None,
+    on_progress: Callable[[float], None] | None,
+    limit: float,
+    loudness: list[float],
+    hop: float,
+    on_split: Callable[[float, float, float], None] | None = None,
+) -> tuple[list[dict[str, Any]], str | None]:
+    """Transcribe [a, b] and return its lines on the whole video's clock, plus the language heard.
+
+    If the computer runs out of memory, the stretch is cut in two at its quietest point near the middle and each
+    half is done on its own, down to MIN_SPAN. Memory needed is in proportion to the length, so halving works.
+    """
+    try:
+        segments, heard = transcriber.transcribe(read_audio(audio_path, a, b), language, on_progress)
+        return offset_segments(segments, a, limit), heard
+    except Exception as exc:
+        if not is_memory_error(exc):
+            raise
+        reason = str(exc)
+    # Out of the except block: its traceback, and the half-built arrays it holds, are released first.
+    gc.collect()
+    if b - a < 2 * MIN_SPAN:
+        raise OutOfMemory(memory.low_memory_message("speech-to-text") + f" [{reason}]")
+    mid = split_point(a, b, loudness, hop)
+    mid = min(max(mid, a + MIN_SPAN), b - MIN_SPAN)
+    log.warning("Out of memory transcribing %.0f-%.0f s (%s); doing it in two parts, split at %.1f s", a, b, reason, mid)
+    if on_split:
+        on_split(a, b, mid)
+    share = (mid - a) / (b - a)
+
+    def first(f: float) -> None:
+        if on_progress:
+            on_progress(f * share)
+
+    def second(f: float) -> None:
+        if on_progress:
+            on_progress(share + f * (1 - share))
+
+    rows1, heard1 = transcribe_span(transcriber, audio_path, a, mid, language, first, limit, loudness, hop, on_split)
+    rows2, heard2 = transcribe_span(transcriber, audio_path, mid, b, language or heard1, second, limit, loudness, hop, on_split)
+    return rows1 + rows2, heard1 or heard2
 
 
 def read_audio(path: str, start: float, end: float) -> np.ndarray:

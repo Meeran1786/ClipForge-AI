@@ -31,6 +31,7 @@ from .analysis.transcript import (
     plan_chunks,
     read_audio,
     tighten,
+    transcribe_span,
 )
 from .analysis.video_signals import analyse_video
 from .ingest import PLATFORM_LABELS, IngestRefused, source_for
@@ -322,34 +323,45 @@ def _transcript(ctx: StageContext) -> dict:
         else:
             ctx.report(plan[done][0] / total if total else 0.0, "Loading the speech model")
         transcriber = make_transcriber(ctx.settings)
-        for i, (a, b) in enumerate(plan):
-            if i < done:
-                continue  # saved before an earlier interruption
+        loudness, hop = signals.get("loudness") or [], float(signals.get("hop") or 0.5)
+        try:
+            for i, (a, b) in enumerate(plan):
+                if i < done:
+                    continue  # saved before an earlier interruption
 
-            def tick(fraction: float, a: float = a, b: float = b) -> None:
-                at = a + (b - a) * fraction
-                ctx.report(min(0.99, at / total), f"Transcribing: {_clock(at)} of {_clock(total)}")
+                def tick(fraction: float, a: float = a, b: float = b) -> None:
+                    at = a + (b - a) * fraction
+                    ctx.report(min(0.99, at / total), f"Transcribing: {_clock(at)} of {_clock(total)}")
 
-            tick(0.0)
-            segments, heard = transcriber.transcribe(read_audio(audio, a, b), language, tick)
-            language = language or heard
-            rows = tighten(offset_segments(segments, a, total), silences)
-            with ctx.session() as s:
-                project = s.get(Project, ctx.project_id)
-                s.add_all(
-                    TranscriptSegment(project_id=project.id, chunk=i, start=r["start"], end=r["end"],
-                                      text=r["text"], words=r["words"])
-                    for r in rows
-                )
-                lines = int(state.get("lines", 0)) + len(rows)
-                state = {
-                    "plan": [list(c) for c in plan], "chunks_done": i + 1, "lines": lines,
-                    "language": language, "model": transcriber.name, "done": i + 1 == len(plan),
-                }
-                # the chunk's lines and the "chunk finished" mark are saved together
-                project.analysis = {**(project.analysis or {}), "transcript": state}
-                s.commit()
-            ctx.publish_project()
+                def split(x: float, y: float, mid: float) -> None:
+                    ctx.report(min(0.99, x / total), f"Low on memory: transcribing {_clock(x)}-{_clock(y)} in smaller parts")
+
+                tick(0.0)
+                # runs out of memory? the stretch is done in halves (see transcribe_span)
+                rows, heard = transcribe_span(transcriber, audio, a, b, language, tick, total, loudness, hop, split)
+                language = language or heard
+                rows = tighten(rows, silences)
+                with ctx.session() as s:
+                    project = s.get(Project, ctx.project_id)
+                    s.add_all(
+                        TranscriptSegment(project_id=project.id, chunk=i, start=r["start"], end=r["end"],
+                                          text=r["text"], words=r["words"])
+                        for r in rows
+                    )
+                    lines = int(state.get("lines", 0)) + len(rows)
+                    state = {
+                        "plan": [list(c) for c in plan], "chunks_done": i + 1, "lines": lines,
+                        "language": language, "model": transcriber.name, "done": i + 1 == len(plan),
+                    }
+                    # the chunk's lines and the "chunk finished" mark are saved together
+                    project.analysis = {**(project.analysis or {}), "transcript": state}
+                    s.commit()
+                ctx.publish_project()
+        finally:
+            # Whatever happened, give the model's memory back before the stage ends or is retried.
+            release = getattr(transcriber, "close", None)
+            if callable(release):
+                release()
 
     if not plan:
         _note_analysis(ctx, "transcript", {"plan": [], "chunks_done": 0, "lines": 0, "language": language,

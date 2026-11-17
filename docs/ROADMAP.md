@@ -138,6 +138,15 @@ minutes. A film with long music-only stretches is slower per minute.
 Gate: on a real 30–60 minute video, transcript timing is within about a second
 of speech when spot-checked at ten points; signals line up with visible events.
 
+Fault found by the owner on a real 42-minute video, 2026-11-17: transcription
+failed with "Unable to allocate 188 MiB" and "mkl_malloc: failed to allocate
+memory". Windows was at its memory ceiling (26.1 of 26.3 GB committed, with
+only 0.17 GB free on C:, where the page file lives). Fixed in code: a chunk is
+now done in halves when memory runs out, the model is always released, and a
+real shortage gives a plain message (details in ARCHITECTURE.md, section 6).
+Unit-tested with a stand-in engine that "runs out of memory"; the owner's own
+job was working again when I looked and was not re-run for the fix.
+
 ## Phase 4 — Moment detection and viral score — built 2026-11-15, owner's gate still open
 
 What was built: an AI provider layer; a three-step detector (the AI reads the

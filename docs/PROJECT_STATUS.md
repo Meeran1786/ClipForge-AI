@@ -128,3 +128,9 @@ understanding) is next; the rest is not started.
   yourself in YouTube Studio.
 - This PC has no graphics card: speech-to-text runs at about ten times real
   time, so a three-hour stream takes roughly 20–40 minutes.
+- This PC is short of memory: Windows' ceiling (RAM plus page file, 26 GB) was
+  nearly all in use by other programs and C: had 0.17 GB free, so
+  transcription of a 42-minute video failed with out-of-memory errors.
+  ClipForge now splits and retries (and says plainly when there is no memory
+  left), but closing programs and freeing space on C: still helps. Speech-to-text
+  needs about 600 MB for a ten-minute chunk plus the model.
