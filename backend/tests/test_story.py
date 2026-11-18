@@ -196,3 +196,19 @@ def test_required_hashtags_always_come_first_and_survive_the_limit():
                     url="https://www.twitch.tv/videos/1", rights_status="licensed", required_hashtags=["#LACY"])
     w = md.plain(md.ClipText(id=1, category="funny", reason=None, said="no way", duration=20), src, None, "x")
     assert "#LACY" in w.description and w.hashtags[0] == "#LACY"
+
+
+def test_a_link_project_can_download_only_a_section(client, sample_video, fake_sources):
+    fake_sources["twitch"].video = sample_video
+    bad = client.post("/api/projects", json={"source": "url", "url": "https://www.twitch.tv/videos/1",
+                                              "rights_status": "licensed", "creator": "Sypher", "rights_note": "campaign rules",
+                                              "options": {"source_start": 300, "source_end": 200}})
+    assert bad.status_code == 422
+    r = client.post("/api/projects", json={"source": "url", "url": "https://www.twitch.tv/videos/1",
+                                            "rights_status": "licensed", "creator": "Sypher", "rights_note": "campaign rules",
+                                            "options": {"source_start": 2750, "source_end": 6350}})
+    assert r.status_code in (200, 201), r.text
+    from .conftest import wait_for
+
+    wait_for(lambda: fake_sources["twitch"].download_calls, timeout=60)
+    assert fake_sources["twitch"].last_section == (2750.0, 6350.0)

@@ -167,7 +167,8 @@ class YtDlpSource(IngestSource):
             max_height=max(heights) or None,
         )
 
-    def download(self, url: str, dest_dir: Path, settings: Settings, progress: ProgressFn) -> Path:
+    def download(self, url: str, dest_dir: Path, settings: Settings, progress: ProgressFn,
+                 section: tuple[float, float] | None = None) -> Path:
         dest_dir.mkdir(parents=True, exist_ok=True)
         state = {"finished_bytes": 0, "total": 0}
 
@@ -199,12 +200,18 @@ class YtDlpSource(IngestSource):
             continuedl=True,
             overwrites=False,
         )
+        if section:
+            from yt_dlp.utils import download_range_func
+
+            opts["download_ranges"] = download_range_func(None, [section])
         # Size the progress bar from the formats that will actually be fetched.
         probe = self._extract(url, self._options(settings, skip_download=True), download=False)
         self._check_playable(probe)
         state["total"] = sum(
             _size_of(f, probe.get("duration")) for f in (probe.get("requested_formats") or [probe])
         )
+        if section and probe.get("duration"):
+            state["total"] = int(state["total"] * min(1.0, (section[1] - section[0]) / float(probe["duration"])))
 
         self._extract(url, opts, download=True)
 

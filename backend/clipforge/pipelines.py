@@ -194,14 +194,23 @@ def _download(ctx: StageContext) -> dict:
         project = s.get(Project, ctx.project_id)
         url = project.source_url
         blocker = download_blocker(project.rights_status, project.creator, project.rights_note)
+        opts = project.options or {}
+        start, end = opts.get("source_start"), opts.get("source_end")
+        meta_duration = (project.source_meta or {}).get("duration")
     if blocker:
         raise IngestRefused(blocker, "rights", hint=False)
     source = source_for(url or "")
     if source is None:
         raise IngestRefused("This link is not from a supported platform.", "unsupported")
+    section = None
+    if start is not None or end is not None:
+        section = (float(start or 0), float(end or meta_duration or 10**7))
+        clock = lambda x: f"{int(x) // 60}:{int(x) % 60:02d}"
+        ctx.report(0.02, f"Downloading only {clock(section[0])} to {clock(section[1])} (minutes:seconds)"
+                   if end else f"Downloading from {clock(section[0])} (minutes:seconds)")
 
     dest_dir = ctx.settings.project_dir(ctx.project_id)
-    path = source.download(url, dest_dir, ctx.settings, ctx.report)
+    path = source.download(url, dest_dir, ctx.settings, ctx.report, section=section)
     with ctx.session() as s:
         project = s.get(Project, ctx.project_id)
         project.source_path = str(path)

@@ -60,6 +60,15 @@ class ProjectOptions(BaseModel):
     credit_tag: bool = True
     # hashtags every Short of this project must carry, for example a streamer's or a campaign's condition
     required_hashtags: list[str] = Field(default_factory=list, max_length=5)
+    # only this part of a link's video is downloaded and used, in seconds (for example a campaign's approved range)
+    source_start: float | None = Field(default=None, ge=0)
+    source_end: float | None = Field(default=None, gt=0)
+
+    @model_validator(mode="after")
+    def _section_in_order(self) -> "ProjectOptions":
+        if self.source_start is not None and self.source_end is not None and self.source_end <= self.source_start:
+            raise ValueError("The end time must come after the start time.")
+        return self
 
     @model_validator(mode="before")
     @classmethod

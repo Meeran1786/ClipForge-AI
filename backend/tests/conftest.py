@@ -83,8 +83,9 @@ class FakeSource(IngestSource):
             est_bytes=self.est_bytes, max_height=360,
         )
 
-    def download(self, url, dest_dir, settings, progress):
+    def download(self, url, dest_dir, settings, progress, section=None):
         self.download_calls += 1
+        self.last_section = section
         assert self.video is not None, "test must set a video for the fake source"
         dest_dir.mkdir(parents=True, exist_ok=True)
         progress(0.5, "halfway")

@@ -71,5 +71,6 @@ class IngestSource(ABC):
         """Read the video's public details without downloading it."""
 
     @abstractmethod
-    def download(self, url: str, dest_dir: Path, settings: Settings, progress: ProgressFn) -> Path:
-        """Download the video into dest_dir and return the file."""
+    def download(self, url: str, dest_dir: Path, settings: Settings, progress: ProgressFn,
+                 section: tuple[float, float] | None = None) -> Path:
+        """Download the video (or only the part from section[0] to section[1] seconds) into dest_dir."""
