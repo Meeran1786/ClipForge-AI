@@ -531,3 +531,19 @@ def test_changing_part_labels_recaptions_without_reframing(client, sample_video,
     wait_ready(client, project["id"])
     jobs = client.get(f"/api/jobs?project_id={project['id']}").json()
     assert jobs[0]["kind"] == "caption"
+
+
+def test_a_steady_line_on_the_streamer_is_not_taken_for_the_overlays_edge():
+    # found on a real stream: a headset line inside the faces cropped the facecam to a blurry patch of face
+    rng = np.random.default_rng(9)
+    frames = []
+    for _ in range(20):
+        img = cv2_blur(rng.integers(0, 255, (360, 640, 3), dtype=np.uint8))
+        img[0:92, 0:163] = cv2_blur(rng.integers(0, 255, (92, 163, 3), dtype=np.uint8))  # overlay 0,0 - 489,276
+        img[44:46, 60:110] = 255  # a headset band across the face, the same in every frame
+        frames.append(img)
+    core = Box(200, 93, 124, 150)  # the faces
+    guess = Box(132, 35, 260, 318)  # face-size estimate: too small on the right
+    box, sides = fr.snap_to_overlay(frames, guess, W, H, core)
+    assert "right" in sides and box.x1 == pytest.approx(489, abs=12)
+    assert box.y1 == pytest.approx(276, abs=12) and box.y < core.y and box.x < core.x

@@ -45,6 +45,8 @@ LAYOUT_LABELS = {
 NEEDS_FACECAM = {"facecam_inset", "split"}
 
 SPLIT_TOP = 0.40  # share of the height given to the streamer in split screen
+CAM_SHARPEN_FROM = 1.8  # sharpen the facecam when it is enlarged more than this
+CAM_SHARPEN = 0.6  # how strongly
 MAX_GAME_SHIFT = 0.15  # split screen: how far (share of the width) the gameplay may slide away from the facecam
 INSET_W, INSET_TOP, INSET_MARGIN = 440, 230, 40
 REACTION_CENTRE = 0.40  # where the facecam sits in the reaction layout, as a share of the height
@@ -340,11 +342,15 @@ def snap_to_overlay(
     cols = slice(max(int(inner.x), 0), max(min(int(inner.x1), fw), int(inner.x) + 1))
     col_profile = gx[rows].mean(axis=0)
     row_profile = gy[:, cols].mean(axis=1)
-    # a face cut off by the overlay's edge gets a box that reaches past it, so look a little way into the faces too
     mx, my = 0.25 * inner.w, 0.25 * inner.h
     if core is not None:
-        windows = {"left": (x0 - reach_x, inner.x + mx), "right": (inner.x1 - mx, x1 + reach_x),
-                   "top": (y0 - reach_y, inner.y + my), "bottom": (inner.y1 - my, y1 + reach_y)}
+        # The estimate from face sizes can be far off (a webcam often shows a whole room), so look well past it.
+        # Never inside the faces, though: a headset, hood or hairline is a steady line too, and snapping
+        # to it crops the streamer down to a blurry patch of face.
+        reach_x, reach_y = 0.8 * b.w, 0.8 * b.h
+        gx_, gy_ = 0.15 * inner.w, 0.15 * inner.h
+        windows = {"left": (x0 - reach_x, inner.x - gx_), "right": (inner.x1 + gx_, x1 + reach_x),
+                   "top": (y0 - reach_y, inner.y - gy_), "bottom": (inner.y1 + gy_, y1 + reach_y)}
     else:
         windows = {"left": (x0 - reach_x, x0 + reach_x), "right": (x1 - reach_x, x1 + reach_x),
                    "top": (y0 - reach_y, y0 + reach_y), "bottom": (y1 - reach_y, y1 + reach_y)}
@@ -678,7 +684,12 @@ def compose(frame: np.ndarray, regions: list[tuple[Box, Box, str]], out_w: int, 
             canvas[dy0:dy1, dx0:dx1] = (cv2.resize(small, size, interpolation=cv2.INTER_LINEAR) * 0.5).astype(np.uint8)
             continue
         shrink = size[0] < piece.shape[1]
-        canvas[dy0:dy1, dx0:dx1] = cv2.resize(piece, size, interpolation=cv2.INTER_AREA if shrink else cv2.INTER_CUBIC)
+        out = cv2.resize(piece, size, interpolation=cv2.INTER_AREA if shrink else cv2.INTER_LANCZOS4)
+        if role == "cam" and size[0] > CAM_SHARPEN_FROM * piece.shape[1]:
+            # a small webcam blown up to fill a panel looks soft: a light unsharp mask brings back its detail
+            soft = cv2.GaussianBlur(out, (0, 0), 1.0 + 0.4 * size[0] / piece.shape[1])
+            out = cv2.addWeighted(out, 1.0 + CAM_SHARPEN, soft, -CAM_SHARPEN, 0)
+        canvas[dy0:dy1, dx0:dx1] = out
         if role == "cam" and len(regions) > 1:  # a thin white edge where the streamer's picture meets the rest
             edge = max(1, round(4 * k))
             if dy0 == 0 and dx0 == 0 and dx1 == out_w:  # split screen: a line under the top panel
