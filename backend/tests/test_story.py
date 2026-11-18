@@ -212,3 +212,11 @@ def test_a_link_project_can_download_only_a_section(client, sample_video, fake_s
 
     wait_for(lambda: fake_sources["twitch"].download_calls, timeout=60)
     assert fake_sources["twitch"].last_section == (2750.0, 6350.0)
+
+
+def test_stickers_move_clear_of_the_captions():
+    assert st.sticker_y(None) == st.STICKER_Y and st.sticker_y(0.80) == st.STICKER_Y
+    assert st.sticker_y(0.48) == pytest.approx(0.64)
+    assert abs(st.sticker_y(0.70) - 0.70) >= st.STICKER_CLEARANCE - 1e-9
+    story = {"lines": [], "cards": [], "stickers": [{"id": "s", "sticker": "no_way", "at": 1, "seconds": 1.6}]}
+    assert "\\pos(540,1229)" in st.add_to_ass("[Events]\n", story, 5.0, caption_y=0.48)

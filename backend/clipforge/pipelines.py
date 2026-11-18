@@ -933,7 +933,9 @@ def _render_clip(ctx: StageContext, c: dict, words: list, tracks: dict, options:
     story = story_mod.normalise(c.get("story"))
     ass_text = result.ass
     if story["lines"] or story["cards"] or story["stickers"]:
-        ass_text = story_mod.add_to_ass(ass_text or to_ass([], style), story, length)
+        cap = placement.get("caption_position")
+        ass_text = story_mod.add_to_ass(ass_text or to_ass([], style), story, length,
+                                        caption_y=(float(cap) / 100 if cap is not None else None))
     ass_path = None
     if ass_text:
         ass_path = out_dir / f"{stem}.ass"

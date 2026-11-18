@@ -68,6 +68,7 @@ NARRATOR_Y = 0.30
 CARD_Y = 0.15
 STICKER_Y = 0.45
 STICKER_MAX_H = 0.20
+STICKER_CLEARANCE = 0.16  # keep a sticker this far (share of height) from the captions, so it never hides them
 STICKER_MAX_W = 0.62
 
 
@@ -292,12 +293,21 @@ def _wrap(text: str, width: int) -> list[str]:
     return out
 
 
-def add_to_ass(ass: str, story: dict[str, Any], length: float, frame_w: int = 1080, frame_h: int = 1920) -> str:
+def sticker_y(caption_y: float | None) -> float:
+    """Where stickers go: their usual place, or clear of the captions when those sit near it."""
+    if caption_y is None or abs(caption_y - STICKER_Y) >= STICKER_CLEARANCE:
+        return STICKER_Y
+    below = caption_y + STICKER_CLEARANCE
+    return below if below <= 0.78 else max(NARRATOR_Y + 0.08, caption_y - STICKER_CLEARANCE)
+
+
+def add_to_ass(ass: str, story: dict[str, Any], length: float, frame_w: int = 1080, frame_h: int = 1920,
+               caption_y: float | None = None) -> str:
     """The narrator box and story cards added to a clip's caption file."""
     from .captions import _ass_time, _escape
 
     lines, cards = recorded(story), story.get("cards") or []
-    stickers = sticker_events(story, length, frame_w, frame_h)
+    stickers = sticker_events(story, length, frame_w, frame_h, caption_y)
     if not lines and not cards and not stickers:
         return ass
     styles = (
@@ -330,11 +340,13 @@ def _ass_bgr(hex_rgb: str) -> str:
     return f"&H00{hex_rgb[5:7]}{hex_rgb[3:5]}{hex_rgb[1:3]}&".upper()
 
 
-def sticker_events(story: dict[str, Any], length: float, frame_w: int = 1080, frame_h: int = 1920) -> list[str]:
+def sticker_events(story: dict[str, Any], length: float, frame_w: int = 1080, frame_h: int = 1920,
+                   caption_y: float | None = None) -> list[str]:
     """Reaction stickers as caption events: a coloured box, a slight tilt and a pop-in. Text only, nothing to license."""
     from .captions import _ass_time, _escape
 
     out = []
+    y = sticker_y(caption_y)
     for st in story.get("stickers") or []:
         spec = STICKERS.get(st.get("sticker"))
         if not spec:
@@ -343,7 +355,7 @@ def sticker_events(story: dict[str, Any], length: float, frame_w: int = 1080, fr
         end = min(length, start + float(st.get("seconds") or 1.6))
         if end - start < 0.3:
             continue
-        tags = (f"\\pos({frame_w // 2},{round(frame_h * STICKER_Y)})\\frz4\\1c{_ass_bgr(spec['fg'])}"
+        tags = (f"\\pos({frame_w // 2},{round(frame_h * y)})\\frz4\\1c{_ass_bgr(spec['fg'])}"
                 f"\\3c{_ass_bgr(spec['bg'])}\\fscx70\\fscy70\\t(0,140,\\fscx100\\fscy100)\\fad(60,120)")
         out.append(f"Dialogue: 4,{_ass_time(start)},{_ass_time(end)},Sticker,,0,0,0,,{{{tags}}}{_escape(spec['text'])}")
     return out
