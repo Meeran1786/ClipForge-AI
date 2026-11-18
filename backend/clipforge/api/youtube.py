@@ -339,7 +339,9 @@ def refresh(project_id: int, clip_id: int, ctx: AppContext = Depends(get_ctx)) -
     with ctx.session() as s:
         clip = s.get(Clip, clip_id)
         if item is None:
-            clip.youtube = {**clip.youtube, "state": "removed", "note": "This video is no longer on your channel."}
+            # gone from the channel (deleted in Studio): forget it, so this Short can be uploaded again
+            clip.youtube = {"state": "removed", "removed_video_id": video_id, "removed_at": iso(utcnow()),
+                            "note": "This video is no longer on your channel. Upload or schedule the Short again."}
         else:
             st = item.get("status") or {}
             clip.youtube = {**clip.youtube, "privacy": st.get("privacyStatus"), "upload_status": st.get("uploadStatus"),
