@@ -461,3 +461,20 @@ def test_a_same_name_channel_with_another_name_or_none_is_ignored(monkeypatch, s
     # a link to twitch.tv/sam_other is not a link back to twitch.tv/sam
     _twitch_with_youtube(monkeypatch, {"sam": {"channel": "Sam", "description": "x@sam.test https://twitch.tv/sam_other"}}, {})
     assert outreach.lookup(settings, "https://www.twitch.tv/sam").emails[0].get("unconfirmed")
+
+
+def test_a_permission_recorded_while_the_lookup_runs_is_kept(client, settings, monkeypatch):
+    # found for real: the owner approved a campaign streamer while ClipForge was still reading the channel,
+    # and the lookup's "no contact" overwrote the approval
+    ready(client)
+    sid = client.post("/api/streamers", json={"url": "https://www.twitch.tv/campaigner"}).json()["id"]
+
+    def slow_lookup(_settings, url):
+        r = client.post(f"/api/streamers/{sid}/approve", json={"evidence": "https://example.test/campaign-rules"})
+        assert r.status_code == 200
+        return profile("campaigner")  # no public address
+
+    monkeypatch.setattr(outreach, "lookup", slow_lookup)
+    tick(client, settings)
+    st = streamer(client, sid)
+    assert st["status"] == "approved" and st["name"] == "Campaigner"

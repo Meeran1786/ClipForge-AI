@@ -675,12 +675,23 @@ def tick(settings: Settings, session_factory, now: datetime | None = None, bus=N
         waiting = select(Streamer).where(Streamer.status == "looking_up").order_by(Streamer.id).limit(LOOKUPS_PER_ROUND)
         for st in s.scalars(waiting).all():
             try:
-                apply_profile(s, st, lookup(settings, st.url), cfg)
+                profile = lookup(settings, st.url)
+                s.refresh(st)  # the lookup takes a while: the owner may have decided meanwhile
+                if st.status == "looking_up":
+                    apply_profile(s, st, profile, cfg)
+                else:  # approved or declined by hand: keep that, just fill in the channel's details
+                    st.platform, st.handle, st.name = profile.platform, profile.handle or st.handle, profile.name or st.name
+                    st.followers, st.channel_id, st.channel_url = profile.followers, profile.channel_id, profile.channel_url
+                    st.description, st.links, st.emails = profile.description, profile.links, profile.emails
             except LookupError_ as exc:
-                st.status, st.status_detail = "failed", str(exc)
+                s.refresh(st)
+                if st.status == "looking_up":
+                    st.status, st.status_detail = "failed", str(exc)
             except Exception as exc:  # noqa: BLE001 - a bad page must not stop the rest
                 log.warning("Looking up %s failed: %s", st.url, exc)
-                st.status, st.status_detail = "failed", f"Could not read this channel: {str(exc)[:200]}"
+                s.refresh(st)
+                if st.status == "looking_up":
+                    st.status, st.status_detail = "failed", f"Could not read this channel: {str(exc)[:200]}"
             s.commit()
             done["looked_up"] += 1
             changed = True
