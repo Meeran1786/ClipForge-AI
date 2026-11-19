@@ -236,6 +236,7 @@ def spread_frames(
     return frames[:count]
 
 
+MOTION_EDGE = 8.0  # the picture must move this much more outside a line than inside for it to count as the border
 BAR_DARK = 5  # a row this dark (0-255) across most of its width, in nearly every frame, is black bar
 BAR_MIN, BAR_MAX = 0.015, 0.16  # a bar thinner than this is noise; thicker is a dark scene, not a bar
 
@@ -351,24 +352,33 @@ def snap_to_overlay(
     k = fw / W
     gx = np.zeros((fh, fw), np.float32)
     gy = np.zeros((fh, fw), np.float32)
+    s1 = np.zeros((fh, fw), np.float32)
+    s2 = np.zeros((fh, fw), np.float32)
     for f in frames:
         g = cv2.cvtColor(f, cv2.COLOR_BGR2GRAY).astype(np.float32)
         gx += np.abs(cv2.Sobel(g, cv2.CV_32F, 1, 0, ksize=3))
         gy += np.abs(cv2.Sobel(g, cv2.CV_32F, 0, 1, ksize=3))
+        s1 += g
+        s2 += g * g
     gx /= len(frames)
     gy /= len(frames)
+    # how much each pixel changes over time: the game moves, a facecam's room mostly does not
+    motion = np.sqrt(np.maximum(s2 / len(frames) - (s1 / len(frames)) ** 2, 0))
     b = box.scaled(k)
     x0, y0, x1, y1 = b.x, b.y, b.x1, b.y1
     reach_x, reach_y = 0.3 * b.w, 0.3 * b.h
     snapped: list[str] = []
 
-    def strongest(profile: np.ndarray, lo: float, hi: float) -> int | None:
+    def candidates(profile: np.ndarray, lo: float, hi: float) -> list[int]:
+        """Clear lines in the window: local peaks at least 3x the window's median, strongest first."""
         lo_i, hi_i = max(int(lo), 1), min(int(hi), len(profile) - 2)
         if hi_i - lo_i < 3:
-            return None
+            return []
         window = profile[lo_i:hi_i]
-        i = int(np.argmax(window))
-        return lo_i + i if window[i] >= 3.0 * max(float(np.median(window)), 1e-3) else None
+        bar = 3.0 * max(float(np.median(window)), 1e-3)
+        peaks = [i for i in range(len(window)) if window[i] >= bar
+                 and window[i] >= window[max(i - 2, 0):i + 3].max()]
+        return [lo_i + i for i in sorted(peaks, key=lambda i: -window[i])][:8]
 
     # the profiles are taken along the stretch the faces cover, which is surely inside the overlay
     inner = core.scaled(k) if core is not None else b
@@ -376,6 +386,32 @@ def snap_to_overlay(
     cols = slice(max(int(inner.x), 0), max(min(int(inner.x1), fw), int(inner.x) + 1))
     col_profile = gx[rows].mean(axis=0)
     row_profile = gy[:, cols].mean(axis=1)
+    col_motion = motion[rows].mean(axis=0)
+    row_motion = motion[:, cols].mean(axis=1)
+    band = max(3, round(0.012 * fw))
+
+    def contrast(side: str, e: int) -> float:
+        """How much more the picture moves just outside this line than just inside it."""
+        m = col_motion if side in ("left", "right") else row_motion
+        before, after = m[max(e - band, 0):e], m[e + 1:e + 1 + band]
+        if not len(before) or not len(after):
+            return 0.0
+        outside, inside = (before, after) if side in ("left", "top") else (after, before)
+        return float(outside.mean() - inside.mean())
+
+    def choose(side: str, lo: float, hi: float) -> int | None:
+        """The overlay's edge: of the clear lines, the one where still picture meets moving game.
+
+        A static line in the game (a quest list, a scoreboard) can be stronger than the overlay's
+        border; the border is the line with the picture changing on one side and not the other.
+        """
+        found = candidates(col_profile if side in ("left", "right") else row_profile, lo, hi)
+        if not found:
+            return None
+        scored = [(contrast(side, e), e) for e in found]
+        best_score, best = max(scored)
+        return best if best_score >= MOTION_EDGE else found[0]
+
     mx, my = 0.25 * inner.w, 0.25 * inner.h
     if core is not None:
         # The estimate from face sizes can be far off (a webcam often shows a whole room), so look well past it.
@@ -388,10 +424,7 @@ def snap_to_overlay(
     else:
         windows = {"left": (x0 - reach_x, x0 + reach_x), "right": (x1 - reach_x, x1 + reach_x),
                    "top": (y0 - reach_y, y0 + reach_y), "bottom": (y1 - reach_y, y1 + reach_y)}
-    edges = {
-        side: (strongest(col_profile if side in ("left", "right") else row_profile, lo, hi), None)
-        for side, (lo, hi) in windows.items()
-    }
+    edges = {side: (choose(side, lo, hi), None) for side, (lo, hi) in windows.items()}
     out = dict(left=x0, right=x1, top=y0, bottom=y1)
     for side, (found, _old) in edges.items():
         if found is None:

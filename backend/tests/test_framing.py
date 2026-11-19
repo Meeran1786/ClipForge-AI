@@ -570,3 +570,22 @@ def test_cutscene_black_bars_are_found_and_kept_out_of_the_gameplay():
     assert game.y >= top - 1 and game.y1 <= H - bottom + 1
     again = fr.FramePlan.from_dict(plan.to_dict())
     assert again.bars == plan.bars
+
+
+def test_a_steady_line_in_the_game_is_not_taken_for_the_overlays_edge():
+    # found on a real stream: a quest list above the facecam drew a stronger line than the facecam's border
+    rng = np.random.default_rng(13)
+    room = cv2_blur(rng.integers(0, 255, (108, 172, 3), dtype=np.uint8))  # the streamer's room, the same each frame
+    frames = []
+    for _ in range(20):
+        big = np.repeat(np.repeat(rng.integers(0, 255, (48, 84, 3), dtype=np.uint8), 8, 0), 8, 1)
+        dy, dx = rng.integers(0, 8, 2)
+        img = np.ascontiguousarray(big[dy:dy + 360, dx:dx + 640])  # the game: big shapes, moving every frame
+        img[60:64, 0:200] = 255  # a quest list's steady white rule, well above the facecam
+        img[137:245, 3:175] = room
+        frames.append(img)
+    core = Box(177, 476, 157, 169)  # the faces, in 1920x1080
+    guess = Box(85, 395, 340, 398)
+    box, sides = fr.snap_to_overlay(frames, guess, W, H, core)
+    assert box.y == pytest.approx(411, abs=15), box
+    assert box.x1 == pytest.approx(525, abs=15) and box.y1 == pytest.approx(735, abs=15)
