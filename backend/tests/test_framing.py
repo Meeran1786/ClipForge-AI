@@ -547,3 +547,26 @@ def test_a_steady_line_on_the_streamer_is_not_taken_for_the_overlays_edge():
     box, sides = fr.snap_to_overlay(frames, guess, W, H, core)
     assert "right" in sides and box.x1 == pytest.approx(489, abs=12)
     assert box.y1 == pytest.approx(276, abs=12) and box.y < core.y and box.x < core.x
+
+
+def test_cutscene_black_bars_are_found_and_kept_out_of_the_gameplay():
+    rng = np.random.default_rng(11)
+    frames = []
+    for n in range(12):
+        img = cv2_blur(rng.integers(0, 255, (360, 640, 3), dtype=np.uint8))
+        img[:20] = 0
+        img[-22:] = 0
+        img[-14:-4, 10:90] = 255  # a stream timer drawn over the bottom bar
+        if n % 3 == 0:
+            img[300:338] = 6  # a dark scene now and then is not a bar
+        frames.append(img)
+    top, bottom = fr.letterbox(frames, H)
+    assert top == pytest.approx(63, abs=4) and bottom == pytest.approx(69, abs=4)
+    dark_scene = [np.full((360, 640, 3), 8, np.uint8) for _ in range(6)]
+    assert fr.letterbox(dark_scene, H) == (0.0, 0.0), "a dark picture is not a letterbox"
+    plan = fr.FramePlan("split", W, H, {"t": [0.0], "x": [W / 2], "y": [H / 2]}, facecam=Box(18, 39, 472, 236),
+                        bars=(top, bottom))
+    game = next(src for src, _dst, role in plan.regions(1.0) if role == "main")
+    assert game.y >= top - 1 and game.y1 <= H - bottom + 1
+    again = fr.FramePlan.from_dict(plan.to_dict())
+    assert again.bars == plan.bars

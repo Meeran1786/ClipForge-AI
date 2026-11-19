@@ -52,6 +52,7 @@ from .framing import (
     decode_size,
     drawer,
     find_facecam,
+    letterbox,
     make_detector,
     place_text,
     plan_clip,
@@ -860,10 +861,11 @@ def _framing(ctx: StageContext) -> dict:
         faces_path, samples = found[clip_id]
         peak = moments.get(moment_id)
         anchor = to_clip_time(peak, segments) if peak is not None else None
+        bars = letterbox(spread_frames(ctx.settings, video, (W, H), segments, count=12), H)
         plan, subject, reason = plan_clip(samples, W, H, requested or options.layout, anchor,
                                           _clip_cuts(cuts, segments), zoom=options.zoom,
                                           facecam=facecam.facecam if facecam else None,
-                                          video_checked=detector is not None)
+                                          video_checked=detector is not None, bars=bars)
         if detector is None:
             subject.note = "The face model is not installed (tools\\models), so the centre of the picture is kept."
         record = {

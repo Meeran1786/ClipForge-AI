@@ -236,6 +236,40 @@ def spread_frames(
     return frames[:count]
 
 
+BAR_DARK = 5  # a row this dark (0-255) across most of its width, in nearly every frame, is black bar
+BAR_MIN, BAR_MAX = 0.015, 0.16  # a bar thinner than this is noise; thicker is a dark scene, not a bar
+
+
+def letterbox(frames: list[np.ndarray], H: float) -> tuple[float, float]:
+    """Cinema black bars (a cutscene's letterbox) at the top and bottom, in source pixels; (0, 0) when none.
+
+    A row belongs to a bar when it is black across most of its width in nearly every frame. Overlays
+    drawn over the bar (a facecam, chat, a timer) cover only part of a row, so they do not hide it.
+    """
+    import cv2
+
+    if len(frames) < 3:
+        return 0.0, 0.0
+    fh = frames[0].shape[0]
+    level = np.stack([np.percentile(cv2.cvtColor(f, cv2.COLOR_BGR2GRAY), 55, axis=1) for f in frames])
+    # a bar is black in (nearly) every frame; a dark scene is dark only some of the time
+    rows = np.percentile(level, 80, axis=0) < BAR_DARK
+
+    def run(seq) -> int:
+        n = 0
+        for v in seq:
+            if not v:
+                break
+            n += 1
+        return n
+
+    out = []
+    for n in (run(rows), run(rows[::-1])):
+        share = n / fh
+        out.append(round((n + 1) * H / fh, 1) if BAR_MIN <= share <= BAR_MAX else 0.0)
+    return out[0], out[1]
+
+
 # ---- what kind of picture this is ------------------------------------------------------
 
 
@@ -549,6 +583,12 @@ class FramePlan:
     anchor: float | None = None  # clip time of the key moment, for the zoom
     zoom: bool = True
     follow: bool = False
+    bars: tuple[float, float] = (0.0, 0.0)  # cinema black bars at the top and bottom of the source, in pixels
+
+    def picture(self) -> Box:
+        """The source without its black bars: the gameplay is taken from here, so no bar reaches the Short."""
+        top, bottom = self.bars
+        return Box(0, top, self.src_w, max(self.src_h - top - bottom, 1))
 
     def point(self, t: float) -> tuple[float, float]:
         """Where the camera points at clip time t. Across a scene cut it jumps, never glides."""
@@ -567,13 +607,17 @@ class FramePlan:
     def _vertical_crop(self, t: float, base: float = 1.0) -> Box:
         W, H = self.src_w, self.src_h
         z = base * self.zoom_factor(t)
-        h = H / z
+        pic = self.picture()
+        h = pic.h / z
         w = h * 9 / 16
         if w > W:  # a source already narrower than 9:16
             w = W / z
             h = min(H, w * 16 / 9)
         x, y = self.point(t)
-        return Box(x - w / 2, y - h / 2, w, h).inside(W, H)
+        crop = Box(x - w / 2, y - h / 2, w, h).inside(W, H)
+        if crop.y < pic.y or crop.y1 > pic.y1:  # keep the crop off the black bars
+            crop = Box(crop.x, min(max(crop.y, pic.y), pic.y1 - crop.h), crop.w, crop.h)
+        return crop
 
     def regions(self, t: float) -> list[tuple[Box, Box, str]]:
         """(source box, output box in 1080x1920, role) for the frame at clip time t, drawn in order.
@@ -588,7 +632,7 @@ class FramePlan:
             bottom = Box(0, top.h, OUT_W, OUT_H - top.h)
             # fill the panel from inside the facecam, so no gameplay shows around the streamer
             cam_src = cam.within_aspect(top.w / top.h).zoomed(self.zoom_factor(t)).inside(W, H)
-            game_src = Box(0, 0, W, H).within_aspect(bottom.w / bottom.h)
+            game_src = self.picture().within_aspect(bottom.w / bottom.h)
             # slide the gameplay away from the facecam (it is already on screen above), but not far
             if game_src.overlap(cam) > 0:
                 margin = 0.01 * W  # clear of the overlay's border too
@@ -599,7 +643,7 @@ class FramePlan:
                 game_src = Box(game_src.x + shift, game_src.y, game_src.w, game_src.h).inside(W, H)
             return [(cam_src, top, "cam"), (game_src, bottom, "main")]
         if self.layout == "facecam_inset" and cam is not None:
-            background = Box(0, 0, W, H).within_aspect(OUT_W / OUT_H)
+            background = self.picture().within_aspect(OUT_W / OUT_H)
             inset = Box(OUT_W - INSET_MARGIN - INSET_W, INSET_TOP, INSET_W, INSET_W * cam.h / cam.w)
             return [(background, full, "main"), (cam, inset, "cam")]
         if self.layout == "reaction" and cam is not None:
@@ -636,25 +680,27 @@ class FramePlan:
     def to_dict(self) -> dict[str, Any]:
         return {"layout": self.layout, "src": [self.src_w, self.src_h], "path": self.path,
                 "facecam": self.facecam.to_list() if self.facecam else None,
-                "anchor": self.anchor, "zoom": self.zoom, "follow": self.follow}
+                "anchor": self.anchor, "zoom": self.zoom, "follow": self.follow, "bars": list(self.bars)}
 
     @staticmethod
     def from_dict(d: dict[str, Any]) -> "FramePlan":
         return FramePlan(layout=d["layout"], src_w=int(d["src"][0]), src_h=int(d["src"][1]), path=d["path"],
                          facecam=Box.of(d["facecam"]) if d.get("facecam") else None, anchor=d.get("anchor"),
-                         zoom=bool(d.get("zoom", True)), follow=bool(d.get("follow", False)))
+                         zoom=bool(d.get("zoom", True)), follow=bool(d.get("follow", False)),
+                         bars=tuple(float(v) for v in (d.get("bars") or (0.0, 0.0))))
 
 
 def plan_clip(
     samples: list[Sample], src_w: int, src_h: int, requested: str | None, anchor: float | None,
     cuts: list[float], zoom: bool = True, facecam: Box | None = None, video_checked: bool = False,
+    bars: tuple[float, float] = (0.0, 0.0),
 ) -> tuple[FramePlan, Subject, str]:
     """The framing for one clip from its face samples: layout, camera path and zoom."""
     subject = classify(samples, src_w, src_h, facecam, video_checked)
     layout, reason = choose_layout(subject, requested)
     follow = layout in ("full", "reaction") and subject.kind == "face"
     path = camera_path(samples, src_w, src_h, follow, cuts)
-    return FramePlan(layout, src_w, src_h, path, subject.facecam, anchor, zoom, follow), subject, reason
+    return FramePlan(layout, src_w, src_h, path, subject.facecam, anchor, zoom, follow, bars), subject, reason
 
 
 # ---- composing a frame ------------------------------------------------------------------------
