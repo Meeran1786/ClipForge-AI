@@ -154,7 +154,11 @@ def narrated(clip: Clip) -> bool:
     final = clip.final or {}
     told = final.get("story") or {}
     updated = (clip.story or {}).get("updated_at") or ""
-    return float(told.get("seconds") or 0) >= 4 and updated <= (final.get("rendered_at") or "")
+    from .qc import NARRATION_MAX_SHARE
+
+    # automatic mode also waits when the narration drowns out the moment (the owner can still schedule by hand)
+    return (float(told.get("seconds") or 0) >= 4 and float(told.get("share") or 0) <= NARRATION_MAX_SHARE
+            and updated <= (final.get("rendered_at") or ""))
 
 
 def project_busy(s, project_id: int) -> bool:

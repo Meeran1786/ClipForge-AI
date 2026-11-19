@@ -156,7 +156,12 @@ def place(story: dict[str, Any], length: float, payoff_at: float | None) -> dict
     def secs_of(line: dict) -> float:
         return float(line.get("seconds") or estimate_seconds(line.get("text") or ""))
 
-    ordered = sorted(lines, key=lambda l: l["at"])
+    # lines ClipForge placed keep the story's order (an outro never lands before the reaction);
+    # a line the owner timed by hand goes where they put it
+    if all(l.get("auto_at", True) for l in lines):
+        ordered = lines
+    else:
+        ordered = sorted(lines, key=lambda l: l["at"])
     cursor = 0.0
     for line in ordered:  # forward: never before the previous line has finished
         line["at"] = round(max(line["at"], cursor), 2)

@@ -220,3 +220,24 @@ def test_stickers_move_clear_of_the_captions():
     assert abs(st.sticker_y(0.70) - 0.70) >= st.STICKER_CLEARANCE - 1e-9
     story = {"lines": [], "cards": [], "stickers": [{"id": "s", "sticker": "no_way", "at": 1, "seconds": 1.6}]}
     assert "\\pos(540,1229)" in st.add_to_ass("[Events]\n", story, 5.0, caption_y=0.48)
+
+
+def test_narration_that_drowns_out_the_moment_is_flagged_and_not_auto_scheduled():
+    heavy = qc.contribution_check({"seconds": 23.2, "share": 0.84, "lines": 4})
+    assert heavy.status == "warn" and "84%" in heavy.detail
+    assert qc.contribution_check({"seconds": 13.6, "share": 0.54, "lines": 3}).status == "ok"
+    clip = SimpleNamespace(final={"story": {"seconds": 23, "share": 0.84}, "rendered_at": "2026-11-19T10:00:00+00:00"},
+                           story={"updated_at": "2026-11-19T09:00:00+00:00"})
+    assert not schedule.narrated(clip)
+
+
+def test_long_takes_never_put_the_outro_before_the_reaction():
+    # found on a real Short: long takes pushed the outro to 17.6 s and the reaction to 22 s
+    story = {"lines": [{"id": "h", "role": "hook", "text": "a", "seconds": 5.4, "auto_at": True},
+                       {"id": "c", "role": "context", "text": "b", "seconds": 8.0, "auto_at": True},
+                       {"id": "r", "role": "reaction", "text": "c", "seconds": 5.6, "auto_at": True},
+                       {"id": "o", "role": "outro", "text": "d", "seconds": 4.2, "auto_at": True}],
+             "cards": [], "stickers": []}
+    st.place(story, 27.7, 23.9)
+    at = {l["role"]: l["at"] for l in story["lines"]}
+    assert at["hook"] < at["context"] < at["reaction"] < at["outro"], at

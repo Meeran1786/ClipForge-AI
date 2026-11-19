@@ -274,6 +274,7 @@ def story_checks(report: dict | None, speech: list[tuple[float, float]] | None, 
     return out
 
 
+NARRATION_MAX_SHARE = 0.6  # more than this and the narration drowns out the moment itself
 ORIGINAL_MIN_SECONDS = 4.0
 
 
@@ -288,6 +289,10 @@ def contribution_check(story: dict | None) -> Check:
     extras = [f"{story.get('cards')} card(s)" if story.get("cards") else "",
               f"{story.get('stickers')} sticker(s)" if story.get("stickers") else ""]
     extra = ", ".join(e for e in extras if e)
+    share = float(story.get("share") or 0)
+    if secs >= ORIGINAL_MIN_SECONDS and share > NARRATION_MAX_SHARE:
+        return warn("original", f"Your narration covers {share:.0%} of the Short, so the streamer is turned down for "
+                                "most of it. Aim for about half or less: shorter lines, or fewer of them.")
     if secs >= ORIGINAL_MIN_SECONDS:
         return ok("original", f"{secs:.0f} s of your narration in {lines} line(s)" + (f", plus {extra}" if extra else "")
                   + ".")
