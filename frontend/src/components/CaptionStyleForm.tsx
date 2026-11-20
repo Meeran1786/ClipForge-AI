@@ -1,5 +1,5 @@
 import { useQuery } from '@tanstack/react-query'
-import type { ReactNode } from 'react'
+import { useEffect, useState, type ReactNode } from 'react'
 import { api, type CaptionPreset, type CaptionStyle, type PresetValues } from '../api'
 
 /** px of the 1080 width YouTube's like/comment/share column takes; captions keep this much room on both sides. */
@@ -145,6 +145,53 @@ function Slider({
   )
 }
 
+/** Colours that read well on busy gameplay and on a face; any other colour can be typed or picked. */
+const SWATCHES = ['#FFFFFF', '#FFE11A', '#39FF14', '#00E5FF', '#FF3B30', '#FF2D95', '#B388FF', '#FF9500']
+
+/** A colour: quick swatches, the system colour picker, and a hex box for an exact colour. */
+function ColorField({ id, value, onChange }: { id: string; value: string; onChange: (hex: string) => void }) {
+  const [draft, setDraft] = useState(value)
+  useEffect(() => setDraft(value), [value])
+  const commit = (raw: string) => {
+    const v = raw.trim().replace(/^#?/, '#').toUpperCase()
+    if (/^#[0-9A-F]{6}$/.test(v)) onChange(v)
+    else setDraft(value)
+  }
+  return (
+    <div className="flex flex-wrap items-center gap-1.5">
+      {SWATCHES.map((c) => (
+        <button
+          key={c}
+          type="button"
+          aria-label={`Use ${c}`}
+          title={c}
+          onClick={() => onChange(c)}
+          className={`h-7 w-7 rounded-full border ${value.toUpperCase() === c ? 'border-2 border-accent ring-2 ring-accent/40' : 'border-line'}`}
+          style={{ background: c }}
+        />
+      ))}
+      <input
+        id={id}
+        type="color"
+        aria-label="Pick any colour"
+        title="Pick any colour"
+        className="h-7 w-9 cursor-pointer rounded border border-line bg-bg"
+        value={value}
+        onChange={(e) => onChange(e.target.value.toUpperCase())}
+      />
+      <input
+        aria-label="Colour code"
+        className="input h-7 w-24 font-mono text-xs uppercase"
+        value={draft}
+        maxLength={7}
+        onChange={(e) => setDraft(e.target.value)}
+        onBlur={(e) => commit(e.target.value)}
+        onKeyDown={(e) => e.key === 'Enter' && commit((e.target as HTMLInputElement).value)}
+      />
+    </div>
+  )
+}
+
 export function CaptionStyleForm({
   value,
   onChange,
@@ -221,22 +268,10 @@ export function CaptionStyleForm({
             <Slider id="cap-size" value={resolved.size} min={36} max={160} onChange={(n) => set('size', n)} />
           </Row>
           <Row label="Text colour" htmlFor="cap-text">
-            <input
-              id="cap-text"
-              type="color"
-              className="h-9 w-16 cursor-pointer rounded border border-line bg-bg"
-              value={resolved.text_color}
-              onChange={(e) => set('text_color', e.target.value.toUpperCase())}
-            />
+            <ColorField id="cap-text" value={resolved.text_color} onChange={(c) => set('text_color', c)} />
           </Row>
           <Row label="Spoken word" htmlFor="cap-hot">
-            <input
-              id="cap-hot"
-              type="color"
-              className="h-9 w-16 cursor-pointer rounded border border-line bg-bg"
-              value={resolved.highlight_color}
-              onChange={(e) => set('highlight_color', e.target.value.toUpperCase())}
-            />
+            <ColorField id="cap-hot" value={resolved.highlight_color} onChange={(c) => set('highlight_color', c)} />
           </Row>
           <Row label="Outline" htmlFor="cap-outline">
             <Slider id="cap-outline" value={resolved.outline} min={0} max={14} onChange={(n) => set('outline', n)} />
