@@ -402,18 +402,20 @@ def _clean(text: str) -> str:
 
 
 def video_body(meta: dict[str, Any], category_id: str, made_for_kids: bool,
-               publish_at: str | None = None) -> dict[str, Any]:
+               publish_at: str | None = None, language: str | None = None) -> dict[str, Any]:
     """The upload's metadata. Always private; with `publish_at` (RFC 3339, UTC) YouTube makes it public then."""
     tags = [t.lstrip("#") for t in meta.get("hashtags") or [] if t.lstrip("#").lower() != "shorts"]
     status = {"privacyStatus": "private", "selfDeclaredMadeForKids": bool(made_for_kids),
               "containsSyntheticMedia": False}
     if publish_at:
         status["publishAt"] = publish_at
-    return {
-        "snippet": {"title": _clean(meta["title"])[:100], "description": _clean(meta.get("description") or "")[:5000],
-                    "tags": tags[:15], "categoryId": str(category_id)},
-        "status": status,
-    }
+    snippet = {"title": _clean(meta["title"])[:100], "description": _clean(meta.get("description") or "")[:5000],
+               "tags": tags[:15], "categoryId": str(category_id)}
+    if language:
+        # say what language the Short is in: left to guess, YouTube can pick the wrong one and
+        # show the Short to the wrong audience (a real English Short was taken for Portuguese)
+        snippet["defaultLanguage"] = snippet["defaultAudioLanguage"] = language
+    return {"snippet": snippet, "status": status}
 
 
 def _next_offset(resp: httpx.Response) -> int:

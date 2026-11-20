@@ -241,3 +241,29 @@ def test_long_takes_never_put_the_outro_before_the_reaction():
     st.place(story, 27.7, 23.9)
     at = {l["role"]: l["at"] for l in story["lines"]}
     assert at["hook"] < at["context"] < at["reaction"] < at["outro"], at
+
+
+def test_the_disk_check_counts_only_the_part_that_is_downloaded(client, sample_video, fake_sources, monkeypatch):
+    import shutil as sh
+    from collections import namedtuple
+
+    from .conftest import wait_for
+
+    tw = fake_sources["twitch"]
+    tw.video = sample_video
+    tw.est_bytes = 60 * 1024**3  # a 60 GB whole stream
+    real = sh.disk_usage
+    monkeypatch.setattr("clipforge.pipelines.shutil.disk_usage",
+                        lambda p: namedtuple("U", "total used free")(real(p).total, 0, 20 * 1024**3))
+    tw_meta = tw.fetch_metadata
+
+    def long_video(url, settings):
+        m = tw_meta(url, settings)
+        m.duration = 36000.0  # ten hours
+        return m
+
+    monkeypatch.setattr(tw, "fetch_metadata", long_video)
+    r = client.post("/api/projects", json={"source": "url", "url": "https://www.twitch.tv/videos/9",
+                                            "rights_status": "licensed", "creator": "Rob", "rights_note": "his email",
+                                            "options": {"source_start": 0, "source_end": 3600}})
+    wait_for(lambda: tw.download_calls, timeout=60)  # one hour of ten: about 6 GB, which fits in 20 GB

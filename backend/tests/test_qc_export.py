@@ -454,3 +454,11 @@ def test_the_credit_links_the_creators_channel_as_the_request_promised():
     lines = md.compose_description("A moment.", src, None, ["#Shorts"], 1, 1).splitlines()
     assert lines[:3] == ["Credit: Some Streamer on Twitch", "Original video: https://www.twitch.tv/videos/123",
                          "Some Streamer's channel: https://www.twitch.tv/somestreamer"]
+
+
+def test_the_upload_says_what_language_the_short_is_in():
+    from clipforge import youtube as yt
+
+    body = yt.video_body({"title": "T", "description": "D", "hashtags": ["#a"]}, "24", False, language="en")
+    assert body["snippet"]["defaultLanguage"] == body["snippet"]["defaultAudioLanguage"] == "en"
+    assert "defaultLanguage" not in yt.video_body({"title": "T"}, "24", False)["snippet"]

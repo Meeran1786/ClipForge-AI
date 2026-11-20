@@ -151,7 +151,15 @@ def _metadata(ctx: StageContext) -> dict:
     meta = source.fetch_metadata(url, ctx.settings)
 
     free = shutil.disk_usage(ctx.settings.data_dir).free
-    need = int((meta.est_bytes or 0) * 1.4) + MIN_FREE_BYTES
+    est = meta.est_bytes or 0
+    with ctx.session() as s:
+        opts = s.get(Project, ctx.project_id).options or {}
+    start, end = opts.get("source_start"), opts.get("source_end")
+    if est and meta.duration and (start is not None or end is not None):
+        # only the chosen part is downloaded: size the check for that part, not the whole video
+        part = max(0.0, min(float(end or meta.duration), meta.duration) - float(start or 0))
+        est = int(est * part / meta.duration)
+    need = int(est * 1.4) + MIN_FREE_BYTES
     if free < need:
         raise IngestRefused(
             f"Not enough disk space: this video needs about {need / 1024**3:.1f} GB free "
@@ -1164,6 +1172,7 @@ def _upload(ctx: StageContext) -> dict:
         project = s.get(Project, ctx.project_id)
         rights = project.rights_status
         defaults = youtube_defaults(s)
+        language = (((project.analysis or {}).get("transcript") or {}).get("language") or "").split("-")[0] or None
     http = yt.make_http()
     done = 0
     try:
@@ -1185,7 +1194,8 @@ def _upload(ctx: StageContext) -> dict:
                     if at <= utcnow() + timedelta(minutes=5):
                         raise yt.Refused("Its publish time has passed; schedule it again.")
                     publish_at = schedule_mod.to_api(at)
-                body = yt.video_body(clip.meta, defaults["category_id"], defaults["made_for_kids"], publish_at)
+                body = yt.video_body(clip.meta, defaults["category_id"], defaults["made_for_kids"], publish_at,
+                                     language=language)
                 session_url = (clip.youtube or {}).get("session")
 
             def keep_session(url: str, clip_id: int = clip_id) -> None:
