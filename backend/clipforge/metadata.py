@@ -76,7 +76,8 @@ class Source:
     url: str | None
     rights_status: str
     language: str | None = None
-    required_hashtags: list[str] = field(default_factory=list)  # a streamer's or campaign's must-have tags
+    required_hashtags: list[str] = field(default_factory=list)
+    channel_url: str | None = None  # the creator's channel: the request to streamers promises a link to it  # a streamer's or campaign's must-have tags
 
 
 @dataclass
@@ -167,6 +168,8 @@ def credit_lines(source: Source) -> list[str]:
     out = [line]
     if source.url:
         out.append(f"Original video: {source.url}")
+    if source.channel_url and source.channel_url.rstrip("/") != (source.url or "").rstrip("/"):
+        out.append(f"{name}'s channel: {source.channel_url}")
     return out
 
 

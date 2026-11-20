@@ -447,3 +447,10 @@ def test_the_shorts_list_shows_approved_and_rendered_clips_with_their_project(cl
     assert row["id"] == clip["id"] and row["project"] == {"id": project["id"], "title": project["title"],
                                                           "rights_status": "licensed", "creator": "Blender"}
     assert row["final"]["qc"]["score"] >= 0 and "file" not in row["final"]
+
+
+def test_the_credit_links_the_creators_channel_as_the_request_promised():
+    src = md.Source(**{**SOURCE.__dict__, "channel_url": "https://www.twitch.tv/somestreamer"})
+    lines = md.compose_description("A moment.", src, None, ["#Shorts"], 1, 1).splitlines()
+    assert lines[:3] == ["Credit: Some Streamer on Twitch", "Original video: https://www.twitch.tv/videos/123",
+                         "Some Streamer's channel: https://www.twitch.tv/somestreamer"]
