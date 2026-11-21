@@ -239,6 +239,9 @@ def test_requests_go_out_a_few_at_a_time_and_spaced_apart(client, settings, prof
     sid = next(s["id"] for s in client.get("/api/streamers").json() if s["handle"] == "s3")
     r = client.post(f"/api/streamers/{sid}/send")
     assert r.status_code == 409 and "limit" in r.json()["error"], "Send now still respects the daily limit"
+    assert "first" in r.json()["error"], "but the request is put at the front of the queue"
+    assert tick(client, settings, now + timedelta(hours=50))["sent"] == 1
+    assert fake_gmail.sent[-1]["to"] == "biz@s3.test", "s3 jumped ahead of s2"
 
 
 def test_turning_automatic_sending_off_keeps_requests_waiting(client, settings, profiles, fake_gmail, tmp_path):

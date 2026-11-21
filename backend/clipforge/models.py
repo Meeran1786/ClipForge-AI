@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from typing import Any
 
-from sqlalchemy import JSON, Float, ForeignKey, Integer, String, Text
+from sqlalchemy import JSON, Boolean, Float, ForeignKey, Integer, String, Text
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
 
@@ -273,6 +273,8 @@ class Streamer(Base):
     links: Mapped[list[Any] | None] = mapped_column(JSON, default=None)
     emails: Mapped[list[Any] | None] = mapped_column(JSON, default=None)
     contact_email: Mapped[str | None] = mapped_column(String(320), default=None)
+    # the owner asked for this one to go out before the rest of the queue
+    send_first: Mapped[bool | None] = mapped_column(Boolean, default=False)
 
     # looking_up | no_contact | queued | sent | followed_up | replied | approved | declined
     # | no_reply | bounced | failed | paused

@@ -586,6 +586,7 @@ def _send_first(settings: Settings, http: httpx.Client, s, st: Streamer, cfg: di
     st.thread_id, st.first_message_id = result["thread_id"], result["header_id"]
     st.sent_at, st.checked_at = now, now
     st.status, st.status_detail = "sent", f"Sent to {st.contact_email}."
+    st.send_first = False
     s.commit()
     log.info("Permission request sent to %s (%s)", st.name or st.handle, st.contact_email)
 
@@ -606,7 +607,13 @@ def send_now(settings: Settings, s, st: Streamer, now: datetime | None = None) -
     cfg = effective(settings, load_settings(s))
     why = missing_sender_details(cfg) or send_allowed(s, cfg, now, manual=True)
     if why:
-        raise gmail.Refused(why)
+        if st.status == "queued" and st.contact_email and not missing_sender_details(cfg):
+            # it cannot go now, but it goes next: ahead of every other queued request
+            st.send_first = True
+            st.status_detail = f"Goes first in the queue, as soon as the limit allows. {why}"
+            s.commit()
+        raise gmail.Refused(why + " It goes first in the queue as soon as the limit allows."
+                            if st.send_first else why)
     if st.status not in ("queued", "paused", "failed") or not st.contact_email:
         raise gmail.Refused("Only a queued request with a contact address can be sent.")
     if _blocked_address(s, st.contact_email, st.id):
@@ -739,7 +746,7 @@ def tick(settings: Settings, session_factory, now: datetime | None = None, bus=N
 
             if cfg["auto_send"] and not send_allowed(s, cfg, now):
                 st = s.scalars(select(Streamer).where(Streamer.status == "queued", Streamer.contact_email.is_not(None))
-                               .order_by(Streamer.created_at, Streamer.id)).first()
+                               .order_by(Streamer.send_first.desc(), Streamer.created_at, Streamer.id)).first()
                 if st is not None:
                     if _blocked_address(s, st.contact_email, st.id):
                         st.status, st.status_detail = "paused", "This address said no or bounced before."
