@@ -108,3 +108,26 @@ def test_automatic_mode_fills_the_next_slots_with_approved_shorts(client, settin
     # taken off the schedule by the owner: automatic mode leaves it alone
     client.delete(f"/api/projects/{project['id']}/clips/{clip['id']}/schedule")
     assert schedule.tick(settings, ctx.session, ctx.worker) == 0
+
+
+def test_a_scheduled_short_whose_upload_hit_the_daily_limit_is_tried_again(client, settings, sample_video,
+                                                                              client_file, fake_google):
+    # found for real: YouTube's daily upload limit left two Shorts with a slot but no video, and nothing retried
+    connect(client, client_file, fake_google)
+    project, clip = finished_project(client, sample_video)
+    ctx = client.app.state.ctx
+    client.put("/api/schedule", json={"enabled": True, "auto": True, "times": ["00:00", "06:00", "12:00", "18:00"],
+                                      "timezone": "UTC"})
+    fake_google.quota = True
+    assert schedule.tick(settings, ctx.session, ctx.worker) == 1
+    wait_ready(client, project["id"])
+    video = client.get(f"/api/projects/{project['id']}/clips").json()[0]["youtube"]
+    assert video["state"] == "scheduled" and not video.get("video_id"), "the slot is kept, the upload failed"
+
+    fake_google.quota = False
+    assert schedule.tick(settings, ctx.session, ctx.worker) == 0, "not straight away"
+    later = utcnow() + timedelta(hours=schedule.RETRY_HOURS, minutes=1)
+    assert schedule.tick(settings, ctx.session, ctx.worker, now=later) == 1
+    wait_ready(client, project["id"])
+    video = client.get(f"/api/projects/{project['id']}/clips").json()[0]["youtube"]
+    assert video["video_id"] and video["publish_at"]

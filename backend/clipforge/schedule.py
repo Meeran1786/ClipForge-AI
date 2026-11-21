@@ -30,6 +30,7 @@ KEY = "schedule"
 LEAD_MINUTES = 30  # a slot must be at least this far ahead (the upload and YouTube's processing need time)
 HORIZON_HOURS = 48  # automatic scheduling fills slots this far ahead, which keeps uploads near the posting rate
 MAX_PER_DAY = 6  # YouTube's default quota allows about six uploads a day
+RETRY_HOURS = 3  # a scheduled Short whose upload failed is tried again this often
 
 
 def local_timezone() -> str:
@@ -218,6 +219,22 @@ def tick(settings, session_factory, worker, now: datetime | None = None) -> int:
             by_project.setdefault(project.id, []).append(clip.id)
             uploads_today += 1
             queued += 1
+        # A Short with a slot whose upload failed (YouTube's daily upload limit, a dropped connection) is
+        # tried again every few hours while its slot is still ahead, instead of being forgotten.
+        for clip, project in s.execute(select(Clip, Project).join(Project, Project.id == Clip.project_id)
+                                       .where(Clip.youtube.is_not(None))).all():
+            video = clip.youtube or {}
+            at = _parse(video.get("publish_at"))
+            retry_after = _parse(video.get("retry_after"))
+            if (video.get("video_id") or video.get("state") != "scheduled" or not at
+                    or at <= now + timedelta(minutes=LEAD_MINUTES) or (retry_after and retry_after > now)
+                    or project_busy(s, project.id) or blocker(s, project, clip)):
+                continue
+            clip.youtube = {**video, "retry_after": iso(now + timedelta(hours=RETRY_HOURS))}
+            s.commit()
+            if clip.id not in by_project.get(project.id, []):
+                by_project.setdefault(project.id, []).append(clip.id)
+                queued += 1
         for pid, ids in by_project.items():
             worker.enqueue("upload", project_id=pid, params={"clip_ids": ids, "override": False})
             log.info("Scheduled %d Short(s) of project %d", len(ids), pid)
